@@ -1,0 +1,155 @@
+---
+title: "Preprocessing: computing GHG multipliers for COICOP categories"
+author: "Michael Lindner"
+date: "5/12/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = ".")
+```
+# Preliminaries: Version control
+
+For exact reproducibility of our results we use the package manager `renv` to keep track of the versions of all packages used.
+
+To reproduce our analysis, install `renv` then use `renv::activate()` to activate the environment specified in the lockfile. You might have to use `renv::hydrate()` to install required packages as well. Afterwards you can run the R code as you would normally do.
+
+
+# Preprocessing: computing GHG multipliers for COICOP categories
+We begin by loading libraries...
+
+```{r message=FALSE}
+library("haven")
+library("dplyr")
+library("readxl")
+library("openxlsx")
+library(tidyr)
+library(stringdist)
+library(labelled)
+```
+
+Again, we need the lcf data, this time with the added code for imputed Rent (number of rooms as proxy)
+```{r}
+lcf <- read_sav("../data/lcf.sav")
+```
+
+This time we can use the automatically generated and manually corrected bridging table. We do not use some of the B & C codes since their expenditures is redundantly record in other variables or since they are 0 anyway. For those the value `USE` was set to `FALSE` in the bridging table. 
+
+```{r}
+bridged <- read.xlsx("../data/bridging_matrix_edited.xlsx") %>% slice(2:n())
+B <- bridged %>% filter(USE==TRUE)
+```
+
+
+Instead of working with a table of GHG multipliers, we now use the total GHG emissions for every category and compute the intensities per pound ourselves. The GHG emissions are available from the same data set release by Uni Leeds.
+```{r}
+coiold <- read_xls("../data/raw/coicop.xls")
+coinew <- read_xlsx("../data/raw/ghg_coicop_2018.xlsx")
+coinew <- coinew %>% separate(COICOP, c("coinum", "coistr"), " ", remove=FALSE, extra = "merge")
+```
+
+
+
+## Compute new multipliers
+
+```{r}
+# the "column names" of the used variables
+uVar <- B %>% select(LCFCODE) %>% unlist %>% as.character
+
+# extract the relevant columns, compute weighted annual expenditure
+weekly_xp_hh <- lcf %>% select(uVar)
+annual_weighted_xp_hh <- lcf$weighta * 52 * weekly_xp_hh 
+# aggregate within LCF codes
+total_xp_lcf <- annual_weighted_xp_hh %>% colSums %>% as.data.frame
+
+
+total_xp_lcf$COICOPCODE <- B$COICOPCODE
+
+# Now aggregate the LCF code totals within the COICOP categories
+total_xp_coicop <- aggregate( . ~ COICOPCODE, total_xp_lcf, sum)
+
+coinew$total_xp <- total_xp_coicop$.[match(coinew$coinum, total_xp_coicop$COICOPCODE)]
+
+# convert values from tCO2 to kilogram
+coinew$ghg_factor <- 1000 * coinew$`2018` / coinew$total_xp
+
+# Avoid NaN
+coinew$ghg_factor[coinew$total_xp == 0.] <- 0.
+
+
+# For comparison record the GHG factor from the original data set as well
+coinew$old_ghg_factor <- coiold$"GHG (kgCO2e per £)"
+
+# Often this is the same, for some categories we see differences however
+
+mean(coinew$ghg_factor / coinew$old_ghg_factor, na.rm=T)
+
+```
+
+## GHG emissions
+```{r}
+# used variables
+uVar <- B %>% select(LCFCODE) %>% unlist %>% as.character
+
+weekly_xp_hh <- lcf %>% select(uVar)
+
+# GHG Multipliers
+ghg_factor_lcf <- coinew$ghg_factor[match(B$COICOPCODE, coinew$coinum)]
+
+# Test that multiplication works as intended
+all.equal(apply(mapply(`*`,weekly_xp_hh,ghg_factor_lcf), 2, mean), (apply(weekly_xp_hh,2,mean) * ghg_factor_lcf), tol = 10e-6)
+```
+
+
+Consistency check: Aggregating weekly_ghg per household should be the same as multiplying total_xp per COICOP category with the corresponding ghg factor and then aggregating.
+
+```{r}
+weekly_ghg_hh <- mapply(`*`,weekly_xp_hh,ghg_factor_lcf) %>% as.data.frame
+
+
+
+
+sum(weekly_ghg_hh * lcf$weighta * 52,na.rm=T) == sum(coinew$total_xp * coinew$ghg_factor, na.rm=T)
+
+
+#Append "GHG" for later merging
+
+colnames(weekly_ghg_hh) <- paste("GHG", colnames(weekly_ghg_hh), sep="_")
+weekly_ghg_hh$case <- lcf$case
+write_sav(weekly_ghg_hh, "../data/weekly_ghg_hh.sav")
+```
+## Evaluation 
+```{r}
+
+# This function returns all used LCF codes that belong to a specific coicop (sub-) category
+
+coicop_to_lcf <- function(category) {
+  if (category %in% coinew$coinum)  {
+    return(B %>% filter(COICOPCODE == category) 
+         %>% select(LCFCODE) %>% unlist%>% as.character)
+  } else {
+  category = paste(category,".",sep="") 
+  return(B %>% filter(startsWith(COICOPCODE,category)) 
+         %>% select(LCFCODE) %>% unlist%>% as.character)
+  }
+}
+
+# This function return the (weighted) total GHG (in t) emitted in a given coicop  category
+coicop_to_total_ghg <- function(category) {
+  CODES = coicop_to_lcf(category)
+  if (identical(CODES,character(0))) {return(0)}
+  stuff <- weekly_ghg_hh %>% select(paste("GHG", CODES, sep="_"))
+  S <- sum(stuff* lcf$weighta * 52, na.rm=T) / 1000
+  return(S)
+}
+
+# Test the above function
+# ...by making sure that each category is correct
+(sapply(coinew$coinum, coicop_to_total_ghg)*1000 - coinew$total_xp * coinew$ghg_factor) %>% round %>% prod(na.rm=T) == 0
+
+
+
+```
+
+

@@ -1,0 +1,143 @@
+---
+title: "Preprocessing: Imputation of missing education values"
+author: "Michael Lindner"
+date: "6/10/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = ".")
+```
+
+# Preliminaries: Version control
+
+For exact reproducibility of our results we use the package manager `renv` to keep track of the versions of all packages used.
+
+To reproduce our analysis, install `renv` then use `renv::activate()` to activate the environment specified in the lockfile. You might have to use `renv::hydrate()` to install required packages as well. Afterwards you can run the R code as you would normally do.
+
+Troubleshooting: `renv::restore()`
+
+
+
+# Load librariers and data set
+
+We begin by loading libraries...
+
+```{r message=FALSE}
+library("haven")
+library("dplyr")
+library(tidyr)
+library(labelled)
+library(mice)
+```
+This time we need data from several of the lcf data sets
+```{r}
+lcf <- read_sav("../data/lcf.sav")
+rawper <- read_sav("../data/raw/2018_rawper_ukanon_final.sav")
+weekly_ghg_hh <- read_sav("../data/weekly_ghg_hh.sav")
+```
+Join GHG to expenditure data
+
+```{r}
+lcf <- full_join(lcf, weekly_ghg_hh, by="case")
+```
+
+Set random seed for reproducibility
+```{r}
+set.seed(123)
+```
+
+
+## Highest education per household
+
+
+```{r}
+# Check number of NAs in individual dataset (40.1% missing)
+sum(is.na(rawper$HighEd1))
+
+
+# Introduce a new factor level for people that are in Education (School) 
+rawper$HighEd1[!is.na(rawper$School)] <- 9
+# Introduce a new factor level for people that are in Education (University) 
+rawper$HighEd1[rawper$TypeEd == 5] <- 10
+
+# Check number of NAs again
+is.na(rawper$HighEd1) %>% sum
+```
+
+```{r}
+rawall <- full_join(rawper, lcf, by = "case")
+```
+
+
+
+## MICE
+
+Summarize ethnicity variable
+```{r}
+rawall$Ethp <- rawall$EthEp
+rawall$Ethp[!is.na(rawall$EthNIp)] <- rawall$EthNIp[!is.na(rawall$EthNIp)]
+rawall$Ethp[!is.na(rawall$EthSp)] <- rawall$EthSp[!is.na(rawall$EthSp)]
+rawall$Ethp[!is.na(rawall$EthWp)] <- rawall$EthWp[!is.na(rawall$EthWp)] 
+```
+
+
+We arrive at the predictors for predictive mean matching (PMM) via the following strategy:
+* Select from literature (income, sex, ethnicity, geography)
+```{r}
+pred_literature <- c("Ten1",
+                     "Sex",
+                     "Gorx",
+                     "A094", # socio economic status of HRP
+                     "EcStatus", # socio economic status
+                     "Ethp", # ethnicity 
+                     "EqIncDOp", # household inc
+                     "GWkIncp", # personal income
+                     "a111p", # rooms
+                     "G018", # adults
+                     #"G019", # children
+                     "a070p" # age of oldest person in HH
+                     #"a065p", # age of HRP
+                     #"DVAge18" # age of person
+                     ) 
+```
+
+* Test the quality of the linear model and remove insignificant predictors
+```{r}
+dfimp <- rawall %>% select(case,HighEd1,pred_literature)
+dfimp[,2:8] <- lapply(dfimp[,2:8] %>% zap_labels, as_factor)
+dfimp[,9:ncol(dfimp)] <- dfimp[,9:ncol(dfimp)] %>% zap_labels
+
+
+# Test the quality of the linear model
+L <- glm(HighEd1 ~ ., dfimp[,2:ncol(dfimp)], family = binomial())
+summary(L)
+#library(jtools)
+#summ(L)
+```
+We impute the missing values with predictive mean matching and study the plausibility and convergence of the generated imputations.
+
+```{r}
+
+imp <- mice(dfimp,  m = 6, method = "pmm", print=FALSE, maxit=10)
+densityplot(imp, ~HighEd1)
+plot(imp)
+```
+Join with lcf data
+```{r}
+iml <- complete(imp, "all", include=TRUE)
+
+mil <- lapply(iml, function(x) x %>% select(case, HighEd1) %>%  group_by(case) %>%
+  slice_min(order_by = HighEd1, with_ties=FALSE) %>%
+  rename(HighEdHH = HighEd1) %>% full_join(lcf, by = "case"))
+
+```
+
+And save
+
+```{r}
+saveRDS(mil, file="../data/lcf_milper.rds")
+```
+
+

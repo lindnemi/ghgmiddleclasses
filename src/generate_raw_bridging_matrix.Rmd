@@ -1,0 +1,280 @@
+---
+title: "Preprocessing: Matching LCF-Codes to COICOP categories"
+author: "Michael Lindner"
+date: "3/1/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = ".")
+```
+# Preliminaries: Version control
+
+For exact reproducibility of our results we use the package manager `renv` to keep track of the versions of all packages used.
+
+To reproduce our analysis, install `renv` then use `renv::activate()` to activate the environment specified in the lockfile. You might have to use `renv::hydrate()` to install required packages as well. Afterwards you can run the R code as you would normally do.
+
+
+# Introduction
+
+This script is for matching each LCF expenditure variable to a COICOP category and record the outcome in a so-called "bridging table". To do this we first algorithmically create a suggestion for a mapping. However, this mapping has shortcomings and needs to be corrected manually. To help with the manual part of the matching process we record additional information obtained from the LCF documentation and from Marta Blatrucewicz who worked with the same data sources.
+
+## Code setup
+
+
+We begin by loading libraries...
+
+```{r message=FALSE}
+library("haven")
+library("dplyr")
+library("readxl")
+library("openxlsx")
+library(tidyr)
+library(stringdist)
+library(labelled)
+```
+
+Load the derived household variables from the Living Costs and Food survey. 
+Unfortunately, many interesting variables are unanonymised and not available in
+the UK data archives (UKDA) version.
+
+```{r}
+lcf <- read_sav("../data/raw/2018_dvhh_ukanon.sav")
+coicop <- read_xls("../data/raw/coicop.xls")
+```
+
+## Manipulating the dataset: Add a proxy for imputed rent expenditure
+
+COICOP category 4.1.2 refers to imputed rent. However LCF does not have this 
+information. As a proxy variable we use the number of rooms, if the accommodation is not rented.
+Since number of rooms is limited by `10 or more rooms` for anonymisation, we will underestimate emissions of large houses.
+
+```{r}
+rawhh <- read_sav("../data/raw/2018_rawhh_ukanon.sav")
+lcf <- rawhh %>% select(case, ScndHome, SHInUk, Ten1) %>% full_join(lcf, by="case")
+
+if (!"BImpRentProxy" %in% rownames(lcf)) {
+  # This is a naive way of computing imputed rent, more complex ways are possible
+  lcf$BImpRentProxy <- lcf$a111p 
+  var_label(lcf$BImpRentProxy) <- "Imputed Rent (Rooms as proxy)"
+  val_labels(lcf$BImpRentProxy) <- lcf$BImpRentProxy %>% val_labels() %>% append(setNames(c(0), "Renter"))
+  # Renters have 0 rooms for which rent needs to be imputed (because its directly available)
+  lcf$BImpRentProxy[lcf$Ten1 == 4] <- 0
+  # We assume the same average size for the secondhome as for the first home
+  # lcf$a111p %>% mean
+  lcf$BImpRentProxy[lcf$ScndHome == 1] <- lcf$BImpRentProxy[lcf$ScndHome == 1] + 5.7
+  write_sav(lcf, "../data/lcf.sav")
+}
+```
+
+399 people have a second dwelling (3 of which rent it). To estimate the imputed rent for these second homes we take the average size of the first home.
+
+```{r}
+# people with second dwelling
+sum(lcf$A138 != 0)
+# most people own second dwelling -> we can not impute it?
+unique(lcf$C41211t) 
+```
+
+
+
+## Matching COICOP and LCF codes with fuzzy string matching
+
+
+
+The COICOP category in the table consist of a number code and a label, e.g.
+`1.1.1.2 Bread`. We will record a COICOP code for every expenditure variable in LCF.
+We will use the COICOP label, to algorithmically generate a suggested COICOP category for every LCF variable. This has to be double manually double checked. 
+
+Here we just split the names`1.1.1.2 Bread` into `1.1.1.2` and `Bread`.
+```{r}
+coicop <- coicop %>% separate(COICOP, c("coinum", "coistr"), " ", remove=FALSE, extra = "merge")
+```
+
+The following code block generates a suggested COICOP category for every LCF expenditure variable (the so-called B and C codes). It does that by attempting to match the strings describing the COICOP categories with the LCF variables.
+
+```{r}
+# use regex to match 
+# - CXXXXXt codes starting with C, with X either a letter or a digit, 
+#   and with at least one X being a digit, and ending with t
+# - C codes ending with c are discarded because they refer to child expenditure
+# - instead make sure to include t codes that refer explicitly to child related expenditure (e.g. child food)
+# - make sure to include BXXXXb codes
+# - B codes (starting with capital B)
+
+bridge <- grep("(^B.*|(?=.*\\d)C[0-9A-Z]{5}t)", colnames(lcf), value =TRUE, perl = TRUE) %>% sort %>% as.data.frame 
+colnames(bridge) <- "LCFCODE"
+
+# Look up corresponding label in LCF, remove trailing description of CXXXXXt codes
+
+bridge$LCFLABEL <- lcf %>% var_label() %>% as.data.frame() %>% select(all_of(bridge$LCFCODE)) %>% transmute_all(~gsub(" - children and adults","", .)) %>% t
+
+# Use fuzzy string matching to determine which labels are similar 
+best_match_idx <- apply(bridge$LCFLABEL,1, function(x) which.min(stringdist(coicop$coistr,x, method =  "jw")))
+
+# populate the COICOPCODE with best fuzzy-matching string
+bridge$COICOPCODE <- coicop$coinum[best_match_idx]
+bridge$COICOPLABELMATCH <- coicop$coistr[best_match_idx]
+bridge$best_match_idx <- best_match_idx
+```
+
+## Evaluating the quality of the fuzzy string matching process
+
+The documentation of the LCF dataset contains information on which B & C codes can
+be used to compute total expenditure for the COICOP categories. We want to make sure
+that we include these variables and that we assign them to the same categories.
+
+Unfortunately this part of the documentation has not been updated during the last years. It contains references to variables that are no longer present in the latest
+edition of the data set and it lacks some variables that have been introduces in
+more recent editions of the LCF survey. Still it contains valuable information to help with the bridging process from LCF codes to COICOP categories.
+
+We manually introduces categories 13,98,99 which are e.g. related to spending by
+national authorities. These are recorded in the dataset but irrelevant for our
+analysis of individual consumption and hence will be dropped later.
+
+```{r}
+# Load custom formatted file of variables used in LCF documentation to calculate
+# total expenditure in various COICOP categories
+# Categories 13,98,99 were added manually
+relvars <- read.delim("../data/coicop_relevant_variables.txt", 
+                      header = FALSE, sep = "\n", strip.white = TRUE,
+                      blank.lines.skip = TRUE, comment.char = "#")
+
+# Transform data a little
+df_relvars <- as.data.frame(t(relvars))
+colnames(df_relvars) <- df_relvars[1,]
+
+
+# Create new column that assigns a category to each expenditure code
+Pidxs <- grep("P.*", t(relvars))
+{
+Pvec <- c()
+for (i in 1:(length(Pidxs)-1)) {
+  Pvec <- c(Pvec, rep(colnames(df_relvars)[Pidxs[i]], Pidxs[i+1] - Pidxs[i]))
+}
+i = length(Pidxs)  
+Pvec <- c(Pvec, rep(colnames(df_relvars)[Pidxs[i]], length(df_relvars) - Pidxs[i]))
+}
+df_relvars <- rbind(df_relvars, Pvec)
+
+# Keep only the expenditure Code columns
+df_relvars <- df_relvars %>% select(!all_of(Pidxs))
+
+## Variables with negative contributions were dropped (since they're small)
+# "(B170 - B173)" "(B175 - B178)" "(B187 - B179)"
+mean(lcf$B173) / mean(lcf$B170) # gas
+mean(lcf$B178) / mean(lcf$B175) # electricity
+mean(lcf$B179) / mean(lcf$B187) # vehicle road tax
+```
+
+The following lines record which variables are outdated in the documentation
+and hence, which will need special attention in the manual matching process.
+
+```{r}
+# Variables mentioned in the docs that are missing from the dataset
+sort(setdiff(colnames(df_relvars), colnames(lcf)))
+
+
+# Variables that could be included but were not so far
+
+df_relvars %>% colnames %>% setdiff(bridge$LCFCODE) %>% intersect(colnames(lcf)) %>% sort
+```
+
+To help with the manual matching process, indicate if a given LCF code is used in
+the documentation.
+
+```{r}
+# Indicate if variable is used in the calculation of COICOP totals
+bridge$DOCSUSE <- sapply(bridge$LCFCODE, function(x) x %in% colnames(df_relvars))
+```
+
+
+For easier code matching, also add the COICOP assignment label found in docs Volume f, part 3.
+```{r}
+
+bridge$DOCSLABEL <- NA
+bridge$DOCSLABEL[bridge$DOCSUSE] <- sapply(bridge$LCFCODE[bridge$DOCSUSE], function(x) df_relvars[2,x])
+# Extract the COICOP division
+bridge$DOCSDIVISION <- bridge$DOCSLABEL %>% substring(1,3) %>% trimws
+# Cleanup: delete the redundant information from the label
+bridge$DOCSLABEL <- gsub(".+?(COICOP: Total )", "", bridge$DOCSLABEL, perl=TRUE)
+
+# Set default use value of variables
+bridge$USE <- bridge$DOCSUSE
+
+colorder <- c("LCFCODE", "LCFLABEL", "DOCSUSE", "USE", "COICOPLABELMATCH", "COICOPCODE", "DOCSDIVISION", "DOCSLABEL") #, "best_match_idx") drop matching idx, it will not be used further
+
+bridge <- bridge[,colorder]
+var_label(bridge) <- c(
+  "Variable code in LCF",
+  "Variable label in LCF",
+  "If the documentation uses this variable to compute total expenditures in one of the COICOP categories (may be outdated)",
+  "If we want to use this variable for our analysis. Might be edited manually.",
+  "Label of the best fuzzy string matches between LCF and COICOP labels",
+  "Code of COICOP category corresponding to variable. Defaults derived from COICOPLABELMATCH. Might be edited manually.",
+  "Code of COICOP division indicated in the docs.",
+  "Label of COICOP division indicated in the docs.")
+
+View(bridge)
+```
+Additional information on which expenditures to include may be obtained from
+Marta Baltruzewicz. Here are the variables she thought relevant.
+
+```{r}
+martavars <- read.delim("../data/additional_relevant_variables.txt", 
+                      header = FALSE, sep = ",", strip.white = TRUE) %>% as.character
+
+setdiff(martavars, bridge$LCFCODE)
+
+
+# Many of these variables, especially those related to children (suffixed `c`) do not contain any (or only minor) expenditures and may savely be dropped
+lcf %>% select(intersect(colnames(lcf), grep(".c", colnames(df_relvars), value=TRUE))) %>% colSums
+# Besides, children variables should be included in the `total` variables suffixed `t`
+```
+
+
+Save the briding table with the added information from the docs and start the 
+manual correction process. (Rename a copy of the table to "bridging_matrix_edited.xlsx").
+
+```{r}
+library("openxlsx")
+bridgexlsx<- rbind(var_label(bridge), bridge)
+write.xlsx(bridgexlsx, "../data/bridging_matrix_raw.xlsx")
+```
+
+
+The LCF codes recorded weekly equivalent expenditure. For yearly expenditure they
+have to be multiplied with 52. To make the dataset representative for the UK population additionally the (annual) weights have to be considered.
+
+
+
+## Test bridging table
+
+The `coicop` table contains ghg intensities (GHG / pounds) for every coicop category.
+
+```{r}
+idx = 2
+ghg <- lcf[bridge$LCFCODE[idx]] * lcf$weighta *  52 * bridge$USE[idx] * coicop$"GHG (kgCO2e per £)"[match(bridge$COICOPCODE[idx], coicop$coinum)]
+
+sum(ghg)
+```
+This already gives the correct results in tonnes of GHG equivalents for some categories. However, even after the manual corrections to the matching process, we were not able to reproduce the exact same values as given in the Consumption Emissions table from University of Leeds. The reason is that for some LCF codes the mapping to a COICOP category is not obvious and various choices may be justified. E.g. holiday packages abroad may be either attributed to the mobility COICOP category or to the recreational COICOP category. Therefore in the next script we will compute the total expenditures for each category and use the information on total GHG emissions per category to re-compute the GHG multipliers ourselves.
+
+
+
+### For reference: COICOP DIVISIONS
+
+1. Food and non-alcoholic beverage
+2. Alcoholic Beverages, Tobacco
+3. Clothing and Footwear
+4. Housing, Water, Electricity
+5. Furnishings, HH Equipment, Carpets
+6. Health Expenditure
+7. Transport Costs
+8. Communication
+9. Recreation
+10. Education
+11. Restaurants and Hotels
+12. Miscellaneous Goods and Services
+

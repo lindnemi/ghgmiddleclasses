@@ -1,0 +1,708 @@
+---
+title: "Data analysis of CO2 emissions and class structure"
+author: "Michael Lindner"
+date: "5/12/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = ".")
+```
+
+# Preliminaries: Version control
+
+For exact reproducibility of our results we use the package manager `renv` to keep track of the versions of all packages used.
+
+To reproduce our analysis, install `renv` then use `renv::activate()` to activate the environment specified in the lockfile. You might have to use `renv::hydrate()` to install required packages as well. Afterwards you can run the R code as you would normally do.
+
+Troubleshooting: `renv::restore()`
+
+
+
+# Preprocessing: extracting the necessary qualitative data from the various datasets
+
+We begin by loading libraries...
+
+```{r message=FALSE}
+library("haven")
+library("dplyr")
+library("readxl")
+library("openxlsx")
+library(tidyr)
+library(formattable)
+library(knitr)
+library("survey")
+library(viridis)
+library(mitools)
+library(labelled)
+library(htmltools)
+library(webshot2)
+```
+
+All needed data has been added to the lcf_mi file in other scripts
+```{r}
+mil <- readRDS("../data/lcf_milper.rds")
+```
+
+## Survey
+
+
+We don't have PSU and Strata, still we can use the weights for the survey. 
+Here we use the original data with missing values in HighEdHH.
+```{r}
+lcf <- mil$`0`
+svy <- svydesign(ids = ~1,  weights = lcf$weighta, data = lcf)
+```
+
+
+
+
+## Middle classes
+
+Only people with academic degree (HighEdHH == 1) end up in the new middle class.
+[UK has a fairly complicated landscape of "sub bachelor degrees" for different professions.]
+
+Start by getting the (weighted) Median income
+```{r}
+median_income = svyquantile(~EqIncDOp, svy, c(.5))$EqIncDOp[1]
+```
+
+```{r}
+assign_reckwitz_class <- function(x, upper_threshold = 2.5) {
+  # Since accessing columns by name in mutate is not so easy
+  # Assuming x[1] is EqIncDOp and x[2] is HighEdHH
+  if (x[1] <= 0.7 * median_income) { return("lower") }
+  if (x[1] >  upper_threshold * median_income) { return("upper") }
+  if (is.na(x[2])) { return(NA) }
+  if (x[2] == 1) { return("new middle") }
+  if (x[2] == 10) { return("new middle") } # student households
+  return("old middle")
+}
+
+#change this for sensitivity analysis
+upper_threshold = 2
+
+mil <- lapply(mil, function(x) x %>% rowwise %>% mutate(ReckwitzClass = factor(assign_reckwitz_class(c(EqIncDOp,HighEdHH), upper_threshold = upper_threshold), levels = c("lower", "old middle", "new middle", "upper"))))
+
+```
+
+
+How many Households are affected by the imputation
+
+```{r}
+sum(is.na(mil$`0`$ReckwitzClass)) + sum(mil$`0`$ReckwitzClass != mil$`1`$ReckwitzClass |
+      mil$`0`$ReckwitzClass != mil$`2`$ReckwitzClass |
+      mil$`0`$ReckwitzClass != mil$`3`$ReckwitzClass |
+      mil$`0`$ReckwitzClass != mil$`4`$ReckwitzClass |
+      mil$`0`$ReckwitzClass != mil$`5`$ReckwitzClass |
+      mil$`0`$ReckwitzClass != mil$`6`$ReckwitzClass, na.rm=T)
+```
+
+
+
+For ease of access to the unimputed data, recreate the svy object
+```{r}
+lcf <- mil$`0`
+svy <- svydesign(ids = ~1,  weights = lcf$weighta, data = lcf)
+svyby(~EqIncDOp, ~ReckwitzClass, svy, svymean) 
+```
+
+
+Now create a survey object with all multiple imputations. With `mitools` statistics 
+of different subset can be combined. This should be used for all analysis.
+
+```{r}
+svymi <- svydesign(ids = ~1,  weights = lcf$weighta, data = imputationList(mil[2:7]))
+
+```
+
+
+# Computing GHG for COICOP categories
+
+First we load the bridging table:
+```{r}
+bridged <- read.xlsx("../data/bridging_matrix_edited.xlsx") %>% slice(2:n())
+B <- bridged %>% filter(USE==TRUE)
+rm(bridged)
+```
+
+We define functions to conveniently access COICOP (sub-)categories
+
+```{r}
+# This function returns all used LCF codes that belong to a specific coicop (sub-) category
+
+coicop_to_lcf <- function(category) {
+  if (category %in% B$COICOPCODE)  {
+    return(B %>% filter(COICOPCODE == category) 
+         %>% select(LCFCODE) %>% unlist%>% as.character)
+  } else {
+  category = paste(category,".",sep="") 
+  return(B %>% filter(startsWith(COICOPCODE,category)) 
+         %>% select(LCFCODE) %>% unlist%>% as.character)
+  }
+}
+coicop_to_xp_formula <- function(category) {
+  # Division by number of persons in HH (A049)
+if (length(category) != 1)
+{return(as.formula(paste("~I((", paste(category, collapse = " + "),")/A049)")))}
+else{
+ return(as.formula(paste("~I((", paste(coicop_to_lcf(category), collapse = " + "),")/A049)")))}
+}
+
+coicop_to_ghg_formula <- function(category) {
+ # Append "GHG_" to access GHG emissions instead of expenditures
+ if (length(category) != 1) {
+  cats <- paste("GHG_", category,  sep="")
+ }
+ else{
+ cats <- paste("GHG_", coicop_to_lcf(category),  sep="")
+ }
+ # Division by number of persons in HH (A049)
+ return(as.formula(paste("~I((", paste(cats, collapse = " + "),")/A049)")))
+}
+```
+
+Now lets compute total CO2 for all 12 COICOP categories
+```{r}
+
+
+CO2_full <- sapply(as.character(c(1:12)), function(x) MIcombine(with(svymi, svyby(coicop_to_ghg_formula(x), ~ReckwitzClass,svymean))))
+
+CO2 <- CO2_full[1,] %>% simplify2array
+CO2_SE <- sapply(CO2_full[2,], function(x) sqrt(diag(x)))
+
+CO2 <- t(CO2)
+
+CO2 <- rbind(CO2, colSums(CO2))
+row.names(CO2)[13] <- "Total"
+
+
+CO2
+```
+
+
+And plot it
+```{r}
+png(paste("coicop_co2_classes_relative","_", upper_threshold ,"up.png", sep=""))
+
+image(round(t(CO2) / rowSums(t(CO2)) * 200)  ,xaxt="n",yaxt="n",ylab="COICOP categories", col=rocket(256, direction= -1))
+#image(t(CO2/ rowSums(CO2)) ,xaxt="n",yaxt="n",ylab="COICOP categories", col=rocket(256, direction= -1))
+axis(side=1, at=c(0,0.33,0.66,1.0), labels=levels(lcf$ReckwitzClass))
+axis(side=2, at=seq(0,1, 1/12), labels=row.names(CO2), las=2)
+grid(nx=4,ny=13,col="black")
+dev.off()
+
+```
+
+# Utilities for formattable plotting
+
+
+This can be used for nicer plots later on.
+```{r}
+#' altbind(df1, SE_df1)
+#'
+#' Bind together two dataframes in alternating column order
+#' Assumes the first on contains mean values, and the second standard errors
+altbind <- function(df1,df2) {
+  assertthat::assert_that(ncol(df1) == ncol(df2))
+  assertthat::are_equal(rownames(df1),rownames(df2))
+  df3 <- data.frame(df1[,1], df2[,1])
+  cns <- c(colnames(df1)[1], "SE")
+  for (i in 2:ncol(df1)) {
+    df3 <- data.frame(df3, df1[,i], df2[,i])
+    cns <- c(cns, colnames(df1)[i], paste("SE", paste(rep(" ",i-1), collapse = ""), sep=""))
+    }
+  colnames(df3) <- cns
+  rownames(df3) <- rownames(df1)
+  return(df3)
+}
+```
+
+
+
+```{r echo = FALSE}
+my_proportion <- function(x) {
+  x / max(S) # this is bad, it's using a global variable AAAAAHHHH
+}
+my_color_bar <- function (color = "lightgray", fixedWidth=200, probfunc=my_proportion,...) 
+{
+        formatter("span", style = function(x) style(display = "inline-block",
+        direction = "rtl", `border-radius` = "4px", 
+        `padding-right` = "2px", 
+        `background-color` = csscolor(color), 
+        width = paste(fixedWidth*probfunc(x),"px",sep=""),
+        ...))
+}
+```
+
+Saving needs this function and packages
+
+```{r}
+#library(htmltools)
+#library(webshot2)
+
+export_formattable <- function(f, file, width = "100%", height = NULL, 
+                               background = "white", delay = 0.2, zoom = 2)
+{
+  w <- as.htmlwidget(f, width = width, height = height)
+  path <- html_print(w, background = background, viewer = NULL)
+  url <- paste0("file:///", gsub("\\\\", "/", normalizePath(path)))
+  webshot(url,
+          file = file,
+          selector = ".formattable_widget",
+          zoom = zoom,
+          delay = delay,
+          vheight = 900)
+}
+```
+
+```{r}
+smallfont <- formatter("span", style = x ~ ifelse(TRUE, "font-size:10px", NA))
+
+```
+
+# T-Test utitiles
+
+```{r}
+# from the lodown package
+
+MIsvyttest<-function(formula, design , ...){
+
+	# the MIcombine function runs differently than a normal svyglm() call
+	m <- eval(bquote(mitools::MIcombine( with( design , survey::svyglm(formula,family=gaussian()))) ) )
+
+	rval<-list(statistic=coef(m)[2]/survey::SE(m)[2],
+			   parameter=m$df[2],
+			   estimate=coef(m)[2],
+			   null.value=0,
+			   alternative="two.sided",
+			   method="Design-based t-test",
+			   data.name=deparse(formula))
+
+	rval$p.value <- ( 1 - pf( ( rval$statistic )^2 , 1 , m$df[2] ) )
+
+	names(rval$statistic)<-"t"
+	names(rval$parameter)<-"df"
+	names(rval$estimate)<-"difference in mean"
+	names(rval$null.value)<-"difference in mean"
+	class(rval)<-"htest"
+
+	return(rval)
+
+}
+
+MIsvyttest(I(HighEdHH==1)~ReckwitzClass, subset(svymi, ReckwitzClass == "new middle" | ReckwitzClass == "old middle"))
+```
+For the t-test formulae
+
+```{r}
+coicop_to_ttest_formula <- function(category) {
+ # Append "GHG_" to access GHG emissions instead of expenditures
+ if (length(category) != 1) {
+  cats <- paste("GHG_", category,  sep="")
+ }
+ else{
+ cats <- paste("GHG_", coicop_to_lcf(category),  sep="")
+ }
+ # Division by number of persons in HH (A049)
+ return(as.formula(paste("I((", paste(cats, collapse = " + "),")/A049)~ReckwitzClass")))
+}
+```
+
+
+# Summary Statistics
+
+```{r}
+
+summary_forms <- sapply(c("~I(HighEdHH==1)", "~EqIncDOp", "~I(Ten1<=2)", "~I(Gorx == 7)"), as.formula) 
+
+H_full <- sapply(summary_forms, function(x) MIcombine(with(svymi, svyby(x, ~ReckwitzClass,svymean))))
+
+
+H_cts <- H_full[1,c(2)] %>% simplify2array %>% as.data.frame 
+H_cts[,1] <- H_cts[,1] * 52
+H_cts <- H_cts %>% round(digits=2)
+H_cts[,1] <- H_cts[,1] %>% round
+colnames(H_cts) <- c("Equivalised Income")
+
+H_fct <- (H_full[1,c(1,3,4)] %>% simplify2array %>% as.data.frame)[5:8,]
+H_fct <- (H_fct * 100)  %>% round(digits=2)
+colnames(H_fct) <- c("% academic degree", "% owning house", "% in London")
+rownames(H_fct) <- rownames(H_cts)
+
+H_cts_SE <- sapply(H_full[2,c(2)], function(x) sqrt(diag(x))) %>% as.data.frame
+H_cts_SE[,1] <- H_cts_SE[,1] * 52
+H_cts_SE <- H_cts_SE %>% round(digits=2)
+H_cts_SE[,1] <- H_cts_SE[,1] %>% round
+colnames(H_cts_SE) <- colnames(H_cts)
+H_cts_SE <- data.frame(apply(H_cts_SE, c(1,2),function(x) paste("±", x, sep="")))
+
+H_fct_SE <- (sapply(H_full[2,c(1,3,4)], function(x) sqrt(diag(x))) %>% as.data.frame)[5:8,]
+H_fct_SE <- (H_fct_SE * 100) %>% round(digits=2)
+colnames(H_fct_SE) <- colnames(H_fct)
+rownames(H_fct_SE) <- rownames(H_cts_SE)
+H_fct_SE <- data.frame(apply(H_fct_SE, c(1,2),function(x) paste("±", x, sep="")))
+ 
+S_form <- altbind(data.frame( H_fct %>% select(1), 
+                              H_cts %>% select(1),
+                              H_fct %>% select(2),
+                              H_fct %>% select(3), check.names = FALSE),
+                  data.frame( H_fct_SE %>% select(1), 
+                              H_cts_SE %>% select(1),
+                              H_fct_SE %>% select(2),
+                              H_fct_SE %>% select(3),check.names = FALSE))
+
+
+FT <- formattable(S_form, list(
+  "% academic degree" = my_color_bar("violet",100, function(x) {x/100}),
+  "SE" = smallfont,
+  "Equivalised Income"= my_color_bar("tomato",100, proportion),
+  "SE " = smallfont,
+  "% owning house" = my_color_bar("orange",100, function(x) {x/100}), 
+  "SE  " = smallfont,
+  "% in London"= my_color_bar("lightskyblue",100, function(x) {x/100}),
+  "SE   " = smallfont))               
+
+FT               
+```
+
+```{r}
+export_formattable(FT,paste("summary.png", sep=""), zoom = 2)
+
+```
+
+## HighEdHH in NMC not due to student households
+```{r}
+MIcombine(with(svymi, svyby(~I(HighEdHH==1), ~ReckwitzClass,svymean)))
+
+```
+
+# Totals
+
+```{r}
+glm_formula <- lcf %>% colnames %>% grep("GHG_", . , value=TRUE) %>% paste(collapse = " + ") %>% paste("I((", . , ")/A049) ~ EqIncDOp + I(HighEdHH==1)", sep = "") %>% formula
+
+lin <- with(svymi, svyglm(glm_formula))
+
+# for (mod in lin) {show(summ(mod))}
+
+```
+
+
+
+
+```{r}
+# Households
+#pop_per_class <- MIcombine(with(svymi, svytotal(~ReckwitzClass)))
+# Persons
+pop_per_class <- MIcombine(with(svymi, svyby(~A049, ~ReckwitzClass, svytotal)))
+H <- pop_per_class$coefficients %>% round
+H_SE <- pop_per_class$variance %>% diag %>% sqrt
+```
+
+
+```{r}
+total_co2_formula <- lcf %>% colnames %>% grep("GHG_", . , value=TRUE) %>% paste(collapse = " + ") %>% paste("~I(", . , ")", sep = "") %>% as.formula
+co2_per_class <- MIcombine(with(svymi, svyby(total_co2_formula, ~ReckwitzClass, svytotal)))
+S <- (co2_per_class$coefficients * 52 / 1e6) %>% round
+S_SE <- ((co2_per_class$variance %>% diag %>% sqrt) * 52 / 1e6) %>% round
+```
+
+
+```{r}
+png(paste("totals_per_class","_", upper_threshold ,"up.png", sep=""))
+
+# Create data
+
+dat <- cbind(H, S)
+colnames(dat) <- c("Population", "CO2")
+rownames(dat) <- c("lower", "old middle", "new middle", "upper")
+ 
+# create color palette:
+library(RColorBrewer)
+coul <- brewer.pal(4, "Set2") 
+ 
+# Transform this data in %
+data_percentage <- apply(dat, 2, function(x){x*100/sum(x)})
+
+# Enable plotting outside
+par(mar=c(5.2, 4.2, 4.2, 8.2), xpd=TRUE)
+ 
+# Make a stacked barplot--> it will be in %!
+bp <- barplot(data_percentage, col=coul, border="white", ylab="% of total")
+legend("topright", legend=rev(rownames(dat)), fill=rev(coul), inset = c(-0.35,0), box.col="white")
+
+
+y_pop <- c(data_percentage[1,1]/2, sum(data_percentage[1:2,1]) - data_percentage[2,1]/2,
+           sum(data_percentage[1:3,1]) - data_percentage[3,1]/2, sum(data_percentage[,1]))
+
+y_pop <- c(data_percentage[1,1]-5, sum(data_percentage[1:2,1]) - 5,
+           sum(data_percentage[1:3,1])- 5, sum(data_percentage[,1])+1)
+y_co2 <- c(data_percentage[1,2]-3, sum(data_percentage[1:2,2]) - 5,
+           sum(data_percentage[1:3,2])- 5, sum(data_percentage[,2]))
+
+
+
+xpos <- c(.7,.7,.7,.7,1.9,1.9,1.9,1.9)
+ypos <- c(y_pop, y_co2)
+text(bp, x=xpos, y=ypos, labels=paste(as.vector(round(data_percentage, digits=1)),"%")
+, pos=1)
+
+dev.off()
+```
+
+
+
+
+
+# High Level View on CO2
+
+```{r echo = FALSE}
+
+
+highlevel_codes <- list(coicop_to_lcf("4"), coicop_to_lcf("7"),
+  setdiff(B %>% select(LCFCODE) %>% unlist %>% as.character, c(coicop_to_lcf("4"), coicop_to_lcf("7"))), B %>% select(LCFCODE) %>% unlist %>% as.character)
+
+H_full <- sapply(highlevel_codes, function(x) MIcombine(with(svymi, svyby(coicop_to_ghg_formula(x), ~ReckwitzClass,svymean))))
+
+H <- H_full[1,] %>% simplify2array %>% as.data.frame 
+H_SE <- sapply(H_full[2,], function(x) sqrt(diag(x))) %>% as.data.frame
+
+
+S <- (H * 52 / 1000) %>% round(digits=2)
+colnames(S) <- c("Housing", "Transport", "Indirect Consumption", "Total")
+
+
+S_SE <- (H_SE * 52 / 1000) %>% round(digits=2)
+colnames(S_SE) <- c("Housing", "Transport", "Indirect Consumption", "Total")
+S_SE <- apply(S_SE, c(1,2),function(x) paste("±", x, sep=""))
+
+
+S_Form <- altbind(S, S_SE)
+```
+
+
+```{r echo = FALSE}
+
+FT <- formattable(S_Form,
+            align=c("r","l","r","l","r","l"),
+            list("Housing" = my_color_bar("orange"),
+                 "SE" = smallfont,
+                 "Transport" = my_color_bar("lightskyblue"),
+                 "SE " = smallfont,
+                 "Indirect Consumption" = my_color_bar("violet"),
+                 "SE  " = smallfont,
+                 "Total" = my_color_bar("tomato"),
+                 "SE   " = smallfont))
+FT
+```
+
+
+
+```{r}
+export_formattable(FT,paste("highlevel","_", upper_threshold ,"up.png", sep=""), zoom = 2)
+```
+
+
+T-testing of middle class differences
+
+```{r}
+T_full <- sapply(highlevel_codes, function(x) MIsvyttest(coicop_to_ttest_formula(x), subset(svymi, ReckwitzClass == "new middle" | ReckwitzClass == "old middle")))
+T_full
+```
+
+
+
+
+# Zoom in...
+##... on Housing
+
+```{r}
+housing_codes <- list(coicop_to_lcf("4.4.1"), coicop_to_lcf("4.4.2"),
+  setdiff(coicop_to_lcf("4"), c(coicop_to_lcf("4.4.1"), coicop_to_lcf("4.4.2"))),
+  coicop_to_lcf("4"))
+  
+
+
+H_full <- sapply(housing_codes, function(x) MIcombine(with(svymi, svyby(coicop_to_ghg_formula(x), ~ReckwitzClass,svymean))))
+
+
+H <- H_full[1,] %>% simplify2array %>% as.data.frame 
+H_SE <- sapply(H_full[2,], function(x) sqrt(diag(x))) %>% as.data.frame
+
+
+S <- (H * 52 / 1000) %>% round(digits=2)
+colnames(S) <- c("Electricity", "Gas", "Other", "Total")
+
+
+S_SE <- (H_SE * 52 / 1000) %>% round(digits=2)
+colnames(S_SE) <- c("Electricity", "Gas", "Other", "Total")
+S_SE <- apply(S_SE, c(1,2),function(x) paste("±", x, sep=""))
+
+
+S_Form <- altbind(data.frame(S), data.frame(S_SE))
+
+FT <- formattable(S_Form,
+            align=c("r","l","r","l","r","l","r","l"),
+            list("Electricity" = my_color_bar("orange",100),
+                 "SE" = smallfont,
+                 "Gas" = my_color_bar("lightskyblue",100),
+                 "SE " = smallfont,
+                 "Other" = my_color_bar("violet",100),
+                 "SE  " = smallfont,
+                 "Total" = my_color_bar("tomato",100),
+                 "SE   " = smallfont))
+
+FT
+
+```
+
+```{r}
+export_formattable(FT,paste("housing.png", sep=""), zoom = 2)
+```
+
+T-testing of middle class differences
+
+```{r}
+T_full <- sapply(housing_codes, function(x) MIsvyttest(coicop_to_ttest_formula(x), subset(svymi, ReckwitzClass == "new middle" | ReckwitzClass == "old middle")))
+T_full
+```
+
+## ... on Mobility
+
+
+
+```{r}
+# car_codes: "7.1." - "7.1.3.3" + "7.2." - "7.2.1.4" + "7.3.4.7" (car leasing)
+# other: "7.1.3.3" + "7.2.1.4" (bicycles) + "7.3.4.4" + "7.3.4.5" (taxis and other) + "7.3.4.6" (car, van, bicycle hire)
+# public transport: 7.3.1, 7.3.2, 7.3.3, 7.3.4.3(school), 7.3.4.8(water)
+# air transport: 7.3.4.1, 7.3.4.2
+
+car_codes <- setdiff(sapply(c("7.1", "7.2", "7.3.4.7"), coicop_to_lcf) %>% unlist,
+                     sapply(c("7.1.3.3", "7.2.1.4"), coicop_to_lcf) %>% unlist)
+pubtrans_codes <- sapply(c("7.3.1", "7.3.2", "7.3.3","7.3.4.3", "7.3.4.8"), coicop_to_lcf) %>% unlist %>% as.character
+
+air_codes <- sapply(c("7.3.4.1", "7.3.4.2"), coicop_to_lcf) %>% unlist %>% as.character
+
+mobility_codes <- list(car_codes, pubtrans_codes, air_codes, coicop_to_lcf(7))
+  
+
+H_full <- sapply(mobility_codes, function(x) MIcombine(with(svymi, svyby(coicop_to_ghg_formula(x), ~ReckwitzClass,svymean))))
+
+
+H <- H_full[1,] %>% simplify2array %>% as.data.frame 
+H_SE <- sapply(H_full[2,], function(x) sqrt(diag(x))) %>% as.data.frame
+
+
+S <- (H * 52 / 1000) %>% round(digits=2)
+colnames(S) <- c("Cars", "Public", "Air", "Total")
+
+
+S_SE <- (H_SE * 52 / 1000) %>% round(digits=2)
+colnames(S_SE) <- c("Cars", "Public", "Air", "Total")
+S_SE <- apply(S_SE, c(1,2),function(x) paste("±", x, sep=""))
+
+
+
+internet_full <- MIcombine(with(svymi, svyby(coicop_to_ghg_formula("8.4"), ~ReckwitzClass,svymean)))
+Internet <- (internet_full$coefficients * 52 / 1000) %>% round(digits=3)
+internet_SE <- internet_full$variance  %>% diag %>% sqrt 
+internet_SE <- (internet_SE *  52 / 1000) %>% round(digits=4)
+internet_SE <- sapply(internet_SE,function(x) paste("±", x, sep=""))
+
+S_Form <- altbind(data.frame(S, Internet, check.names = FALSE), data.frame(S_SE, internet_SE))
+
+
+FT <-formattable(S_Form,
+            align=c("r","l","r","l","r","l","r","l"),
+            list("Cars" = my_color_bar("orange",100),
+                 "SE" = smallfont,
+                 "Public" = my_color_bar("lightskyblue",100),
+                 "SE " = smallfont,
+                 "Air" = my_color_bar("violet",100),
+                 "SE  " = smallfont,
+                 "Total" = my_color_bar("tomato",100),
+                 "SE   " = smallfont,
+                 "Internet" = my_color_bar("pink",50, proportion),
+                 "SE    " = smallfont))
+
+FT
+```
+
+```{r}
+export_formattable(FT,paste("mobility","_", upper_threshold ,"up.png", sep=""), zoom = 2)
+
+```
+
+T-testing of middle class differences
+
+```{r}
+T_full <- sapply(mobility_codes, function(x) MIsvyttest(coicop_to_ttest_formula(x), subset(svymi, ReckwitzClass == "new middle" | ReckwitzClass == "old middle")))
+T_full
+```
+
+## ... on Indirect Consumption
+
+
+
+```{r}
+
+all_consumption_codes <- setdiff(B %>% select(LCFCODE) %>% unlist %>% as.character, c(coicop_to_lcf("4"), coicop_to_lcf("7")))
+
+
+meat_codes <- sapply(c("1.1.5","1.1.6", "1.1.7","1.1.8","1.1.9","1.1.10"), coicop_to_lcf) %>% unlist %>% as.character
+
+other_food_codes <- setdiff(coicop_to_lcf(1), meat_codes)
+
+other_consumption_codes <- setdiff(all_consumption_codes, c(meat_codes, other_food_codes, coicop_to_lcf(11))) # COICOP 11 -> Restaurants, Holidays
+  
+consumption_codes <- list(meat_codes, other_food_codes, coicop_to_lcf(11),other_consumption_codes,  all_consumption_codes) # 
+  
+
+H_full <- sapply(consumption_codes, function(x) MIcombine(with(svymi, svyby(coicop_to_ghg_formula(x), ~ReckwitzClass,svymean))))
+
+
+H <- H_full[1,] %>% simplify2array %>% as.data.frame 
+H_SE <- sapply(H_full[2,], function(x) sqrt(diag(x))) %>% as.data.frame
+
+
+S <- (H * 52 / 1000) %>% round(digits=2)
+colnames(S) <- c("Meat*", "Other Food*",  "Restaurants, Holidays*", "Other Indirect Consumption","Total")# "Other Consumption"
+
+
+S_SE <- (H_SE * 52 / 1000) %>% round(digits=2)
+colnames(S_SE) <- colnames(S)
+S_SE <- apply(S_SE, c(1,2),function(x) paste("±", x, sep=""))
+
+
+
+S_Form <- altbind(S, S_SE)
+
+
+FT <- formattable(S_Form,
+            align=c("r","l","r","l","r","l","r","l"),
+            list("Meat*" = my_color_bar("orange",200),
+                 "SE" = smallfont,
+                 "Other Food*" = my_color_bar("lightskyblue",200),
+                 "SE " = smallfont,
+                 "Restaurants, Holidays*" = my_color_bar("violet",200),
+                 "SE  " = smallfont,
+                 "Other Indirect Consumption" = my_color_bar("pink",100),
+                 "SE   " = smallfont,
+                 "Total" = my_color_bar("tomato",100),
+                 "SE    " = smallfont))
+
+FT
+```
+
+```{r}
+export_formattable(FT,paste("consumption","_", upper_threshold ,"up.png", sep=""), zoom = 2)
+```
+
+T-testing of middle class differences
+
+```{r}
+T_full <- sapply(consumption_codes, function(x) MIsvyttest(coicop_to_ttest_formula(x), subset(svymi, ReckwitzClass == "new middle" | ReckwitzClass == "old middle")))
+T_full
+```
