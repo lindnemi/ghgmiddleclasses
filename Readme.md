@@ -10,10 +10,13 @@ Companion repository for the paper:
 
 ## Data set
 
-We use the Living Costs and Food survey 2018-2019 available from UK data service and official statistics on the GHG footprint of UK available at https://www.gov.uk/government/statistics/uks-carbon-footprint (accessed: 2022-03-01) 
+We use the Living Costs and Food survey 2018-2019 available from UK data service and official statistics on the GHG footprint of UK available at https://www.gov.uk/government/statistics/uks-carbon-footprint (accessed: 2022-03-01).
 
 
 ## Repository structure
+
+If you want to familiarize yourself with the code we recommend starting by viewing the `.html` files in `src` in a web browser.
+
 
 The repository is structured as follows:
 
@@ -29,11 +32,18 @@ The repository is structured as follows:
 ```
 
 * `data` contains preprocessed data, the subfolder `raw` contains original LCF data and GHG conversion factors. The downloaded survey data should be place here as well.
-* `renv` belongs to the package of the same name and is necessary for reproducibility of our analysis
-* `src` holds `.Rmd` files for reproducing our analysis, `.html` files that render code, output and results in an easily accesible format, and the `.png` plots used in the publication
+* `renv` belongs to the package of the same name and is necessary for reproducibility of our analysis.
+* `src` holds `.Rmd` files for reproducing our analysis, `.html` files that render code, output and results in an easily accesible format, and the `.png` plots used in the publication.
 
+## Code structure:
 
-If you want to familiarize yourself with the code we recommend starting by viewing the `.html` files in `src` in a web browser.
+The scripts should be executed in the following order:
+
+* `generate_raw_bridging_matrix.Rmd` - Generates a map from COICOP categories to LCF codes
+* (optional) manually correcting the generated matrix
+* `ghg_multipliers.Rmd` -  Computes GHG emissions multipliers for every COICOP category
+* `rawper_imputation.Rmd` - Imputation of missing education variables
+* `analysis.Rmd` - Analysis for the paper
 
 ## Preliminaries: Version control
 
