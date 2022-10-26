@@ -1,4 +1,4 @@
-# Understanding Middle Classes
+# Greenhouse Gas Emissions of Social Classes in the United Kingdom
 
 
 [![DOI](ADD)](ADD)
@@ -6,7 +6,7 @@
 
 Companion repository for the paper: 
 
- **Ecology and Class Structure: Greenhouse Gas Emissions and Social Classes in the United Kingdom**
+ **Ecology and Class Structure: Greenhouse Gas Emissions of Social Classes in the United Kingdom**
 
 ## Data set
 
