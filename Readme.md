@@ -1,7 +1,7 @@
 # Greenhouse Gas Emissions of Social Classes in the United Kingdom
 
+[![DOI](https://zenodo.org/badge/547809090.svg)](https://zenodo.org/badge/latestdoi/547809090)
 
-[![DOI](ADD)](ADD)
 
 
 Companion repository for the paper: 
