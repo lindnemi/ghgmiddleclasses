@@ -241,8 +241,8 @@ Saving needs this function and packages
 ```{r}
 #library(htmltools)
 #library(webshot2)
-
-export_formattable <- function(f, file, width = "100%", height = NULL, 
+# Width by default 75% instead of 100%!!!
+export_formattable <- function(f, file, width = "65%", height = NULL, 
                                background = "white", delay = 0.2, zoom = 2)
 {
   w <- as.htmlwidget(f, width = width, height = height)
@@ -314,7 +314,6 @@ coicop_to_ttest_formula <- function(category) {
 # Summary Statistics
 
 ```{r}
-
 summary_forms <- sapply(c("~I(HighEdHH==1)", "~EqIncDOp", "~I(Ten1<=2)", "~I(Gorx == 7)"), as.formula) 
 
 H_full <- sapply(summary_forms, function(x) MIcombine(with(svymi, svyby(x, ~ReckwitzClass,svymean))))
@@ -352,8 +351,10 @@ S_form <- altbind(data.frame( H_fct %>% select(1),
                               H_cts_SE %>% select(1),
                               H_fct_SE %>% select(2),
                               H_fct_SE %>% select(3),check.names = FALSE))
+```
 
 
+```{r}
 FT <- formattable(S_form, list(
   "% academic degree" = my_color_bar("violet",100, function(x) {x/100}),
   "SE" = smallfont,
@@ -362,13 +363,14 @@ FT <- formattable(S_form, list(
   "% owning house" = my_color_bar("orange",100, function(x) {x/100}), 
   "SE  " = smallfont,
   "% in London"= my_color_bar("lightskyblue",100, function(x) {x/100}),
-  "SE   " = smallfont))               
+  "SE   " = smallfont
+  ))               
 
 FT               
 ```
 
 ```{r}
-export_formattable(FT,paste("summary.png", sep=""), zoom = 2)
+export_formattable(FT,paste("summary.png", sep=""))
 
 ```
 
@@ -411,7 +413,8 @@ S_SE <- ((co2_per_class$variance %>% diag %>% sqrt) * 52 / 1e6) %>% round
 
 
 ```{r}
-png(paste("totals_per_class","_", upper_threshold ,"up.png", sep=""))
+leng = 512
+png(paste("totals_per_class","_", upper_threshold ,"up.png", sep=""),height=leng,width=2*leng)
 
 # Create data
 
@@ -427,11 +430,12 @@ coul <- brewer.pal(4, "Set2")
 data_percentage <- apply(dat, 2, function(x){x*100/sum(x)})
 
 # Enable plotting outside
-par(mar=c(5.2, 4.2, 4.2, 8.2), xpd=TRUE)
+cfactor = 2.8
+par(mar=c(3, 6, 3, 20), xpd=TRUE, cex.lab=cfactor, cex.axis=cfactor, cex.main=cfactor, cex.sub=cfactor, pty="m")
  
 # Make a stacked barplot--> it will be in %!
 bp <- barplot(data_percentage, col=coul, border="white", ylab="% of total")
-legend("topright", legend=rev(rownames(dat)), fill=rev(coul), inset = c(-0.35,0), box.col="white")
+legend("topright", legend=rev(rownames(dat)), fill=rev(coul), inset = c(-.41,0), box.col="white", cex=cfactor)
 
 
 y_pop <- c(data_percentage[1,1]/2, sum(data_percentage[1:2,1]) - data_percentage[2,1]/2,
@@ -447,7 +451,7 @@ y_co2 <- c(data_percentage[1,2]-3, sum(data_percentage[1:2,2]) - 5,
 xpos <- c(.7,.7,.7,.7,1.9,1.9,1.9,1.9)
 ypos <- c(y_pop, y_co2)
 text(bp, x=xpos, y=ypos, labels=paste(as.vector(round(data_percentage, digits=1)),"%")
-, pos=1)
+, pos=1, cex = cfactor)
 
 dev.off()
 ```
@@ -461,6 +465,8 @@ dev.off()
 ```{r echo = FALSE}
 
 
+
+
 highlevel_codes <- list(coicop_to_lcf("4"), coicop_to_lcf("7"),
   setdiff(B %>% select(LCFCODE) %>% unlist %>% as.character, c(coicop_to_lcf("4"), coicop_to_lcf("7"))), B %>% select(LCFCODE) %>% unlist %>% as.character)
 
@@ -471,11 +477,11 @@ H_SE <- sapply(H_full[2,], function(x) sqrt(diag(x))) %>% as.data.frame
 
 
 S <- (H * 52 / 1000) %>% round(digits=2)
-colnames(S) <- c("Housing", "Transport", "Indirect Consumption", "Total")
+colnames(S) <- c("Housing", "Mobility", "Other", "Total")
 
 
 S_SE <- (H_SE * 52 / 1000) %>% round(digits=2)
-colnames(S_SE) <- c("Housing", "Transport", "Indirect Consumption", "Total")
+colnames(S_SE) <- c("Housing", "Mobility", "Other", "Total")
 S_SE <- apply(S_SE, c(1,2),function(x) paste("±", x, sep=""))
 
 
@@ -489,9 +495,9 @@ FT <- formattable(S_Form,
             align=c("r","l","r","l","r","l"),
             list("Housing" = my_color_bar("orange"),
                  "SE" = smallfont,
-                 "Transport" = my_color_bar("lightskyblue"),
+                 "Mobility" = my_color_bar("lightskyblue"),
                  "SE " = smallfont,
-                 "Indirect Consumption" = my_color_bar("violet"),
+                 "Other" = my_color_bar("violet"),
                  "SE  " = smallfont,
                  "Total" = my_color_bar("tomato"),
                  "SE   " = smallfont))
@@ -501,7 +507,7 @@ FT
 
 
 ```{r}
-export_formattable(FT,paste("highlevel","_", upper_threshold ,"up.png", sep=""), zoom = 2)
+export_formattable(FT,paste("highlevel","_", upper_threshold ,"up.png", sep=""))
 ```
 
 
@@ -526,22 +532,24 @@ housing_codes <- list(coicop_to_lcf("4.4.1"), coicop_to_lcf("4.4.2"),
 
 
 H_full <- sapply(housing_codes, function(x) MIcombine(with(svymi, svyby(coicop_to_ghg_formula(x), ~ReckwitzClass,svymean))))
+```
 
 
+```{r}
 H <- H_full[1,] %>% simplify2array %>% as.data.frame 
 H_SE <- sapply(H_full[2,], function(x) sqrt(diag(x))) %>% as.data.frame
 
 
 S <- (H * 52 / 1000) %>% round(digits=2)
-colnames(S) <- c("Electricity", "Gas", "Other", "Total")
+colnames(S) <- c("Electricity", "Gas", "Other Housing", "Total")
 
 
 S_SE <- (H_SE * 52 / 1000) %>% round(digits=2)
-colnames(S_SE) <- c("Electricity", "Gas", "Other", "Total")
+colnames(S_SE) <- c("Electricity", "Gas", "Other Housing", "Total")
 S_SE <- apply(S_SE, c(1,2),function(x) paste("±", x, sep=""))
 
 
-S_Form <- altbind(data.frame(S), data.frame(S_SE))
+S_Form <- altbind(data.frame(S, check.names = FALSE), data.frame(S_SE, check.names = FALSE))
 
 FT <- formattable(S_Form,
             align=c("r","l","r","l","r","l","r","l"),
@@ -549,17 +557,18 @@ FT <- formattable(S_Form,
                  "SE" = smallfont,
                  "Gas" = my_color_bar("lightskyblue",100),
                  "SE " = smallfont,
-                 "Other" = my_color_bar("violet",100),
+                 "Other Housing" = my_color_bar("violet",100),
                  "SE  " = smallfont,
                  "Total" = my_color_bar("tomato",100),
                  "SE   " = smallfont))
+
 
 FT
 
 ```
 
 ```{r}
-export_formattable(FT,paste("housing.png", sep=""), zoom = 2)
+export_formattable(FT,paste("housing.png", sep=""))
 ```
 
 T-testing of middle class differences
@@ -627,11 +636,12 @@ FT <-formattable(S_Form,
                  "Internet" = my_color_bar("pink",50, proportion),
                  "SE    " = smallfont))
 
+
 FT
 ```
 
 ```{r}
-export_formattable(FT,paste("mobility","_", upper_threshold ,"up.png", sep=""), zoom = 2)
+export_formattable(FT,paste("mobility","_", upper_threshold ,"up.png", sep=""))
 
 ```
 
@@ -642,7 +652,7 @@ T_full <- sapply(mobility_codes, function(x) MIsvyttest(coicop_to_ttest_formula(
 T_full
 ```
 
-## ... on Indirect Consumption
+## ... on Other Indirect Consumption
 
 
 
@@ -668,7 +678,7 @@ H_SE <- sapply(H_full[2,], function(x) sqrt(diag(x))) %>% as.data.frame
 
 
 S <- (H * 52 / 1000) %>% round(digits=2)
-colnames(S) <- c("Meat*", "Other Food*",  "Restaurants, Holidays*", "Other Indirect Consumption","Total")# "Other Consumption"
+colnames(S) <- c("Meat*", "Other Food*",  "Restaurants, Holidays*", "Miscellaneous","Total")# "Other Consumption"
 
 
 S_SE <- (H_SE * 52 / 1000) %>% round(digits=2)
@@ -688,7 +698,7 @@ FT <- formattable(S_Form,
                  "SE " = smallfont,
                  "Restaurants, Holidays*" = my_color_bar("violet",200),
                  "SE  " = smallfont,
-                 "Other Indirect Consumption" = my_color_bar("pink",100),
+                 "Miscellaneous" = my_color_bar("pink",100),
                  "SE   " = smallfont,
                  "Total" = my_color_bar("tomato",100),
                  "SE    " = smallfont))
@@ -697,7 +707,7 @@ FT
 ```
 
 ```{r}
-export_formattable(FT,paste("consumption","_", upper_threshold ,"up.png", sep=""), zoom = 2)
+export_formattable(FT,paste("consumption","_", upper_threshold ,"up.png", sep=""))
 ```
 
 T-testing of middle class differences
