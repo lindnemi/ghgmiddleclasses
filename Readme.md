@@ -1,12 +1,12 @@
-# Understanding Middle Classes
+# Greenhouse Gas Emissions of Social Classes in the United Kingdom
 
+[![DOI](https://zenodo.org/badge/547809090.svg)](https://zenodo.org/badge/latestdoi/547809090)
 
-[![DOI](ADD)](ADD)
 
 
 Companion repository for the paper: 
 
- **Ecology and Class Structure: Greenhouse Gas Emissions and Social Classes in the United Kingdom**
+ **Ecology and Class Structure: Greenhouse Gas Emissions of Social Classes in the United Kingdom**
 
 ## Data set
 
@@ -15,7 +15,7 @@ We use the Living Costs and Food survey 2018-2019 available from UK data service
 
 ## Repository structure
 
-If you want to familiarize yourself with the code we recommend starting by viewing the `.html` files in `src` in a web browser.
+If you want to familiarize yourself with the code we recommend starting by viewing the `.html` files in `src` in a web browser. The most comfortable way to preview HTML files on GitHub is to go to https://htmlpreview.github.io/ or just prepend it to the original URL, i.e.: https://htmlpreview.github.io/?https://github.com/lindnemi/ghgmiddleclasses/blob/main/src/analysis.html, see also [here](https://stackoverflow.com/questions/8446218/how-to-see-an-html-page-on-github-as-a-normal-rendered-html-page-to-see-preview).
 
 
 The repository is structured as follows:
