@@ -327,7 +327,7 @@ colnames(H_cts) <- c("Equivalised Income")
 
 H_fct <- (H_full[1,c(1,3,4)] %>% simplify2array %>% as.data.frame)[5:8,]
 H_fct <- (H_fct * 100)  %>% round(digits=2)
-colnames(H_fct) <- c("% academic degree", "% owning house", "% in London")
+colnames(H_fct) <- c("% academic degree", "% owning home", "% in London")
 rownames(H_fct) <- rownames(H_cts)
 
 H_cts_SE <- sapply(H_full[2,c(2)], function(x) sqrt(diag(x))) %>% as.data.frame
@@ -360,7 +360,7 @@ FT <- formattable(S_form, list(
   "SE" = smallfont,
   "Equivalised Income"= my_color_bar("tomato",100, proportion),
   "SE " = smallfont,
-  "% owning house" = my_color_bar("orange",100, function(x) {x/100}), 
+  "% owning home" = my_color_bar("orange",100, function(x) {x/100}), 
   "SE  " = smallfont,
   "% in London"= my_color_bar("lightskyblue",100, function(x) {x/100}),
   "SE   " = smallfont
