@@ -45,6 +45,31 @@ All needed data has been added to the lcf_mi file in other scripts
 mil <- readRDS("../data/lcf_milper.rds")
 ```
 
+Additional data for validation
+```{r}
+rawhh <- read_sav("../data/raw/2018_rawhh_ukanon.sav")
+rawper <- read_sav("../data/raw/2018_rawper_ukanon_final.sav")
+
+mil <- lapply(
+  mil,
+  function(x) 
+    rawhh %>% 
+    select(case, Computer1, Petrol, SameShop) %>%
+    mutate_all(~replace_na(., 0)) %>%
+    full_join(x, by="case"))
+
+mil <- lapply(
+  mil,
+  function(x) rawper %>% 
+    select(case, RoyalAmt) %>% 
+    group_by(case) %>%
+    summarize(RoyalAmtHH = sum(RoyalAmt, na.rm=TRUE)) %>%
+
+    full_join(x, by="case"))
+
+```
+
+
 ## Survey
 
 
@@ -135,6 +160,75 @@ svymi <- svydesign(ids = ~1,  weights = lcf$weighta, data = imputationList(mil[2
 
 ```
 
+# Validation Statistics
+
+```{r}
+validation_forms <-
+  sapply(c("~I(RoyalAmtHH>0)", "~I(Petrol==4)", "~I(Computer1==9)", "~I(SameShop==1)"),
+         as.formula)
+
+idx_cts <- c()
+idx_fct <- c(1,2,3,4)
+
+H_full <-
+  sapply(validation_forms, function(x)
+    MIcombine(with(svymi, svyby(
+      x, ~ ReckwitzClass, svymean
+    ))))
+
+
+# H_cts <- H_full[1, c(1)] %>% simplify2array %>% as.data.frame
+# H_cts <- H_cts %>% round(digits = 2)
+# H_cts[, 1] <- H_cts[, 1] %>% round
+# colnames(H_cts) <- c("Royalties")
+
+H_fct <-
+  (H_full[1, c(1, 2, 3, 4)] %>% simplify2array %>% as.data.frame)[5:8, ]
+H_fct <- (H_fct * 100)  %>% round(digits = 2)
+colnames(H_fct) <-
+  c("% receives royalties", "% electric cars", "% no computer", "% same shops")
+rownames(H_fct) <- rownames(H_cts)
+
+# H_cts_SE <-
+#   sapply(H_full[2, c(1)], function(x)
+#     sqrt(diag(x))) %>% as.data.frame
+# H_cts_SE[, 1] <- H_cts_SE[, 1] * 52
+# H_cts_SE <- H_cts_SE %>% round(digits = 2)
+# H_cts_SE[, 1] <- H_cts_SE[, 1] %>% round
+# colnames(H_cts_SE) <- colnames(H_cts)
+# H_cts_SE <-
+#   data.frame(apply(H_cts_SE, c(1, 2), function(x)
+#     paste("±", x, sep = "")))
+
+H_fct_SE <-
+  (sapply(H_full[2, c(1,2, 3, 4)], function(x)
+    sqrt(diag(x))) %>% as.data.frame)[5:8, ]
+H_fct_SE <- (H_fct_SE * 100) %>% round(digits = 2)
+colnames(H_fct_SE) <- colnames(H_fct)
+rownames(H_fct_SE) <- rownames(H_cts_SE)
+H_fct_SE <-
+  data.frame(apply(H_fct_SE, c(1, 2), function(x)
+    paste("±", x, sep = "")))
+
+S_form <- altbind(
+  data.frame(
+    H_fct %>% select(1),
+    H_fct %>% select(2),
+    H_fct %>% select(3),
+    H_fct %>% select(4),
+    check.names = FALSE
+  ),
+  data.frame(
+    H_fct_SE %>% select(1),
+    H_fct_SE %>% select(2),
+    H_fct_SE %>% select(3),
+    H_fct_SE %>% select(4),
+    check.names = FALSE
+  )
+)
+
+S_form
+```
 
 # Computing GHG for COICOP categories
 
@@ -266,11 +360,11 @@ altbind <- function(df1, df2) {
   assertthat::assert_that(ncol(df1) == ncol(df2))
   assertthat::are_equal(rownames(df1), rownames(df2))
   df3 <- data.frame(df1[, 1], df2[, 1])
-  cns <- c(colnames(df1)[1], "SE")
+  cns <- c(colnames(df1)[1], "SEM")
   for (i in 2:ncol(df1)) {
     df3 <- data.frame(df3, df1[, i], df2[, i])
     cns <-
-      c(cns, colnames(df1)[i], paste("SE", paste(rep(" ", i - 1), collapse = ""), sep =
+      c(cns, colnames(df1)[i], paste("SEM", paste(rep(" ", i - 1), collapse = ""), sep =
                                        ""))
   }
   colnames(df3) <- cns
@@ -476,17 +570,17 @@ FT <- formattable(
     "% academic degree" = my_color_bar("violet", 100, function(x) {
       x / 100
     }),
-    "SE" = smallfont,
+    "SEM" = smallfont,
     "Equivalised Income" = my_color_bar("tomato", 100, proportion),
-    "SE " = smallfont,
+    "SEM " = smallfont,
     "% owning home" = my_color_bar("orange", 100, function(x) {
       x / 100
     }),
-    "SE  " = smallfont,
+    "SEM  " = smallfont,
     "% in London" = my_color_bar("lightskyblue", 100, function(x) {
       x / 100
     }),
-    "SE   " = smallfont
+    "SEM   " = smallfont
   )
 )
 
@@ -506,6 +600,10 @@ export_formattable(FT,
                    ))
 
 ```
+
+
+
+
 
 ## HighEdHH in NMC not due to student households
 ```{r}
@@ -709,13 +807,13 @@ FT <- formattable(
   align = c("r", "l", "r", "l", "r", "l"),
   list(
     "Housing" = my_color_bar("orange"),
-    "SE" = smallfont,
+    "SEM" = smallfont,
     "Mobility" = my_color_bar("lightskyblue"),
-    "SE " = smallfont,
+    "SEM " = smallfont,
     "Other" = my_color_bar("violet"),
-    "SE  " = smallfont,
+    "SEM  " = smallfont,
     "Total" = my_color_bar("tomato"),
-    "SE   " = smallfont
+    "SEM   " = smallfont
   )
 )
 FT
@@ -806,13 +904,13 @@ FT <- formattable(
   align = c("r", "l", "r", "l", "r", "l", "r", "l"),
   list(
     "Electricity" = my_color_bar("orange", 100),
-    "SE" = smallfont,
+    "SEM" = smallfont,
     "Gas" = my_color_bar("lightskyblue", 100),
-    "SE " = smallfont,
+    "SEM " = smallfont,
     "Other Housing" = my_color_bar("violet", 100),
-    "SE  " = smallfont,
+    "SEM  " = smallfont,
     "Total" = my_color_bar("tomato", 100),
-    "SE   " = smallfont
+    "SEM   " = smallfont
   )
 )
 
@@ -918,15 +1016,15 @@ FT <- formattable(
   align = c("r", "l", "r", "l", "r", "l", "r", "l"),
   list(
     "Cars" = my_color_bar("orange", 100),
-    "SE" = smallfont,
+    "SEM" = smallfont,
     "Public" = my_color_bar("lightskyblue", 100),
-    "SE " = smallfont,
+    "SEM " = smallfont,
     "Air" = my_color_bar("violet", 100),
-    "SE  " = smallfont,
+    "SEM  " = smallfont,
     "Total" = my_color_bar("tomato", 100),
-    "SE   " = smallfont,
+    "SEM   " = smallfont,
     "Internet" = my_color_bar("pink", 50, proportion),
-    "SE    " = smallfont
+    "SEM    " = smallfont
   )
 )
 
@@ -1033,15 +1131,15 @@ FT <- formattable(
   align = c("r", "l", "r", "l", "r", "l", "r", "l"),
   list(
     "Meat*" = my_color_bar("orange", 200),
-    "SE" = smallfont,
+    "SEM" = smallfont,
     "Other Food*" = my_color_bar("lightskyblue", 200),
-    "SE " = smallfont,
+    "SEM " = smallfont,
     "Restaurants, Holidays*" = my_color_bar("violet", 200),
-    "SE  " = smallfont,
+    "SEM  " = smallfont,
     "Miscellaneous" = my_color_bar("pink", 100),
-    "SE   " = smallfont,
+    "SEM   " = smallfont,
     "Total" = my_color_bar("tomato", 100),
-    "SE    " = smallfont
+    "SEM    " = smallfont
   )
 )
 
