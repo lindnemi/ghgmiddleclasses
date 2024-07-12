@@ -1,7 +1,7 @@
 ---
 title: "Data analysis of CO2 emissions and class structure"
 author: "Michael Lindner"
-date: "5/12/2022"
+date: "12/07/2024"
 output: html_document
 ---
 
@@ -184,7 +184,7 @@ CO2
 
 And plot it
 ```{r}
-png(paste("coicop_co2_classes_relative","_", upper_threshold ,"up.png", sep=""))
+png(paste("../plots/","coicop_co2_classes_relative","_","upperclass", upper_threshold, ".png", sep=""))
 
 image(round(t(CO2) / rowSums(t(CO2)) * 200)  ,xaxt="n",yaxt="n",ylab="COICOP categories", col=rocket(256, direction= -1))
 #image(t(CO2/ rowSums(CO2)) ,xaxt="n",yaxt="n",ylab="COICOP categories", col=rocket(256, direction= -1))
@@ -370,7 +370,7 @@ FT
 ```
 
 ```{r}
-export_formattable(FT,paste("summary.png", sep=""))
+export_formattable(FT,paste("../plots/","summary","_","upperclass", upper_threshold, ".png", sep=""))
 
 ```
 
@@ -414,7 +414,7 @@ S_SE <- ((co2_per_class$variance %>% diag %>% sqrt) * 52 / 1e6) %>% round
 
 ```{r}
 leng = 512
-png(paste("totals_per_class","_", upper_threshold ,"up.png", sep=""),height=leng,width=2*leng)
+png(paste("../plots/","totals_per_class","_","upperclass", upper_threshold, ".png", sep=""),height=leng,width=2*leng)
 
 # Create data
 
@@ -507,7 +507,7 @@ FT
 
 
 ```{r}
-export_formattable(FT,paste("highlevel","_", upper_threshold ,"up.png", sep=""))
+export_formattable(FT,paste("../plots/","highlevel","_","upperclass", upper_threshold, ".png", sep=""))
 ```
 
 
@@ -568,7 +568,7 @@ FT
 ```
 
 ```{r}
-export_formattable(FT,paste("housing.png", sep=""))
+export_formattable(FT,paste("../plots/","housing","_","upperclass", upper_threshold, ".png", sep=""))
 ```
 
 T-testing of middle class differences
@@ -641,7 +641,7 @@ FT
 ```
 
 ```{r}
-export_formattable(FT,paste("mobility","_", upper_threshold ,"up.png", sep=""))
+export_formattable(FT,paste("../plots/","mobility","_","upperclass", upper_threshold, ".png", sep=""))
 
 ```
 
@@ -707,7 +707,7 @@ FT
 ```
 
 ```{r}
-export_formattable(FT,paste("consumption","_", upper_threshold ,"up.png", sep=""))
+export_formattable(FT,paste("../plots/","consumption","_","upperclass", upper_threshold, ".png", sep=""))
 ```
 
 T-testing of middle class differences
