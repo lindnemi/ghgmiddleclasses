@@ -189,7 +189,7 @@ age = as.formula("~I(p396p * (p396p < 80))")
 
 ```{r}
 summary_forms <-
-  sapply(c("~I(Gorx == 7)"), "~I(A172==2)", meat_share, years_address,
+  sapply(c("~I(Gorx == 7)", "~I(A172==2)", meat_share, years_address),
          as.formula)
 
 H_full <-
