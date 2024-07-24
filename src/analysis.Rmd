@@ -116,7 +116,7 @@ assign_reckwitz_class <- function(x, upper_threshold = 2.5) {
 }
 
 #change this for sensitivity analysis
-upper_threshold = 2
+upper_threshold = 3
 
 mil <-
   lapply(mil, function(x)
@@ -161,7 +161,137 @@ svymi <- svydesign(ids = ~1,  weights = lcf$weighta, data = imputationList(mil[2
 ```
 
 # Validation Statistics
+```{r}
+meat_share = as.formula("~I(
+   (C11211t + C11221t + C11231t + C11241t + C11252t + 
+    C11251t + C11253t + C11261t + C11271t) /
+   (C11111t + C11121t + C11122t + C11131t + C11141t + 
+    C11142t + C11151t + C11211t + C11221t + C11231t + 
+    C11241t + C11251t + C11252t + C11253t + C11261t + 
+    C11271t + C11311t + C11321t + C11331t + C11341t + 
+    C11411t + C11421t + C11431t + C11441t + C11451t + 
+    C11461t + C11471t + C11511t + C11521t + C11522t + 
+    C11531t + C11541t + C11551t + C11611t + C11621t + 
+    C11631t + C11641t + C11651t + C11661t + C11671t + 
+    C11681t + C11691t + C11711t + C11721t + C11731t + 
+    C11741t + C11751t + C11761t + C11771t + C11781t + 
+    C11811t + C11821t + C11831t + C11841t + C11851t + 
+    C11861t + C11911t + C11921t + C11931t + C11941t + 
+    C12111t + C12121t + C12131t + C12211t + C12221t + 
+    C12231t + C12241t)
+    )")
 
+years_address = as.formula("~I((A131 / p396p) * (p396p < 80))")
+
+age = as.formula("~I(p396p * (p396p < 80))")
+```
+
+
+```{r}
+summary_forms <-
+  sapply(c("~I(Gorx == 7)"), "~I(A172==2)", meat_share, years_address,
+         as.formula)
+
+H_full <-
+  sapply(summary_forms, function(x)
+    MIcombine(with(svymi, svyby(
+      x, ~ ReckwitzClass, svymean, na.rm=TRUE
+    ))))
+
+
+# H_cts <- H_full[1, c(2)] %>% simplify2array %>% as.data.frame
+# H_cts[, 1] <- H_cts[, 1] #* 52
+# H_cts <- H_cts %>% round(digits = 2)
+# #H_cts[, 1] <- H_cts[, 1] %>% round
+# colnames(H_cts) <- c("Average age (< 80)")
+
+H_fct <-
+  (H_full[1, c(1,2, 3, 4)] %>% simplify2array %>% as.data.frame)[5:8, ]
+H_fct <- (H_fct * 100)  %>% round(digits = 2)
+colnames(H_fct) <-
+  c("% in London", "% no internet", "% meat of total food", "% lifetime spent at address")
+rownames(H_fct) <- rownames(H_cts)
+
+# H_cts_SE <-
+#   sapply(H_full[2, c(2)], function(x)
+#     sqrt(diag(x))) %>% as.data.frame
+# H_cts_SE[, 1] <- H_cts_SE[, 1] #* 52
+# H_cts_SE <- H_cts_SE %>% round(digits = 2)
+# #H_cts_SE[, 1] <- H_cts_SE[, 1] %>% round
+# colnames(H_cts_SE) <- colnames(H_cts)
+# H_cts_SE <-
+#   data.frame(apply(H_cts_SE, c(1, 2), function(x)
+#     paste("±", x, sep = "")))
+
+H_fct_SE <-
+  (sapply(H_full[2, c(1, 2, 3, 4)], function(x)
+    sqrt(diag(x))) %>% as.data.frame)[5:8, ]
+H_fct_SE <- (H_fct_SE * 100) %>% round(digits = 2)
+colnames(H_fct_SE) <- colnames(H_fct)
+rownames(H_fct_SE) <- rownames(H_cts_SE)
+H_fct_SE <-
+  data.frame(apply(H_fct_SE, c(1, 2), function(x)
+    paste("±", x, sep = "")))
+
+S_form <- altbind(
+  data.frame(
+    H_fct %>% select(1),
+    H_fct %>% select(2),
+    H_fct %>% select(3),
+    H_fct %>% select(4),
+    check.names = FALSE
+  ),
+  data.frame(
+    H_fct_SE %>% select(1),
+    H_fct_SE %>% select(2),
+    H_fct_SE %>% select(3),
+    H_fct_SE %>% select(4),
+    check.names = FALSE
+  )
+)
+```
+
+
+```{r}
+FT <- formattable(
+  S_form,
+  list(
+    "% in London" = my_color_bar("violet", 100, function(x) {
+      x / 100 * 2
+    }),
+    "SEM" = smallfont,
+    "% no internet" = my_color_bar("tomato", 100, function(x) {
+      x / 100 * 2
+    }),
+    "SEM " = smallfont,
+    "% meat of total food" = my_color_bar("orange", 100, function(x) {
+      x / 100 * 2
+    }),
+    "SEM  " = smallfont,
+    "% lifetime spent at address" = my_color_bar("lightskyblue", 100, function(x) {
+      x / 100 * 2
+    }),
+    "SEM   " = smallfont
+  )
+)
+
+FT               
+```
+
+```{r}
+export_formattable(FT,
+                   paste(
+                     "../plots/",
+                     "validation",
+                     "_",
+                     "upperclass",
+                     upper_threshold,
+                     ".png",
+                     sep = ""
+                   ))
+
+```
+### Inconclusive 
 ```{r}
 validation_forms <-
   sapply(c("~I(RoyalAmtHH>0)", "~I(Petrol==4)", "~I(Computer1==9)", "~I(SameShop==1)"),
@@ -229,6 +359,171 @@ S_form <- altbind(
 
 S_form
 ```
+#### Meat Share
+
+
+
+```{r}
+
+meat_codes <-
+  sapply(c("1.1.5", "1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10"),
+         coicop_to_lcf) %>% unlist %>% as.character
+
+food_codes <- coicop_to_lcf(1)
+
+consumption_codes <-
+  list(
+    meat_codes,
+    food_codes
+  )
+
+
+H_full <-
+  sapply(consumption_codes, function(x)
+    MIcombine(with(
+      svymi, svyby(coicop_to_ghg_formula(x), ~ ReckwitzClass, svymean)
+    )))
+
+
+H <- H_full[1, ] %>% simplify2array %>% as.data.frame
+H_SE <-
+  sapply(H_full[2, ], function(x)
+    sqrt(diag(x))) %>% as.data.frame
+
+
+S <- (H * 52 / 1000) %>% round(digits = 2)
+colnames(S) <-
+  c("Meat*",
+    "All Food*")
+
+
+S_SE <- (H_SE * 52 / 1000) %>% round(digits = 2)
+colnames(S_SE) <- colnames(S)
+S_SE <- apply(S_SE, c(1, 2), function(x)
+  paste("±", x, sep = ""))
+
+
+
+S_Form <- altbind(S, S_SE)
+
+
+FT <- formattable(
+  S_Form,
+  align = c("r", "l", "r", "l", "r", "l", "r", "l"),
+  list(
+    "Meat*" = my_color_bar("orange", 200),
+    "SEM" = smallfont,
+    "All Food*" = my_color_bar("lightskyblue", 200),
+    "SEM " = smallfont
+  )
+)
+
+FT
+```
+
+Meat / food 
+
+```{r}
+meat_share = as.formula("~I(
+   (C11211t + C11221t + C11231t + C11241t + C11252t + 
+    C11251t + C11253t + C11261t + C11271t) /
+   (C11111t + C11121t + C11122t + C11131t + C11141t + 
+    C11142t + C11151t + C11211t + C11221t + C11231t + 
+    C11241t + C11251t + C11252t + C11253t + C11261t + 
+    C11271t + C11311t + C11321t + C11331t + C11341t + 
+    C11411t + C11421t + C11431t + C11441t + C11451t + 
+    C11461t + C11471t + C11511t + C11521t + C11522t + 
+    C11531t + C11541t + C11551t + C11611t + C11621t + 
+    C11631t + C11641t + C11651t + C11661t + C11671t + 
+    C11681t + C11691t + C11711t + C11721t + C11731t + 
+    C11741t + C11751t + C11761t + C11771t + C11781t + 
+    C11811t + C11821t + C11831t + C11841t + C11851t + 
+    C11861t + C11911t + C11921t + C11931t + C11941t + 
+    C12111t + C12121t + C12131t + C12211t + C12221t + 
+    C12231t + C12241t)
+    )")
+
+H_full <-MIcombine(with(
+      svymi, svyby(meat_share, ~ ReckwitzClass, svymean, na.rm=T)
+    ))
+
+
+H_full
+
+```
+International / All flights 
+
+```{r}
+int_share = as.formula("~I(
+   (B488 + C73312t) /
+   (B488 + C73312t + B487 + C73311t)
+    )")
+
+H_full <-MIcombine(with(
+      svymi, svyby(int_share, ~ ReckwitzClass, svymean, na.rm=T)
+    ))
+
+
+H_full
+
+```
+
+ Holiday Share
+```{r}
+int_share = as.formula("~I(
+   (B480 + B482 + B484) /
+   (B480 + B481 + B482 + B483 + B484 + B485)
+    )")
+
+H_full <-MIcombine(with(
+      svymi, svyby(int_share, ~ ReckwitzClass, svymean, na.rm=T)
+    ))
+
+
+H_full
+```
+
+```{r}
+investments = as.formula("~I(P324p)")
+
+H_full <-MIcombine(with(
+      svymi, svyby(investments, ~ ReckwitzClass, svymean, na.rm=T)
+    ))
+
+
+H_full
+```
+
+```{r}
+money_abroad = as.formula("~I(CK4111 / EqIncDOp)")
+
+H_full <-MIcombine(with(
+      svymi, svyby(money_abroad, ~ ReckwitzClass, svymean, na.rm=T)
+    ))
+
+H_full
+```
+
+```{r}
+years_address = as.formula("~I((A131 / p396p) * (p396p < 80))")
+
+H_full <-MIcombine(with(
+      svymi, svyby(years_address, ~ ReckwitzClass, svymean, na.rm=T)
+    ))
+
+
+H_full
+```
+
+```{r}
+H_full <-MIcombine(with(
+      svymi, svyby(as.formula("~I(A172==1)"), ~ ReckwitzClass, svymean, na.rm=T)
+    ))
+
+H_full
+
+```
+
 
 # Computing GHG for COICOP categories
 
@@ -500,7 +795,7 @@ coicop_to_ttest_formula <- function(category) {
 
 ```{r}
 summary_forms <-
-  sapply(c("~I(HighEdHH==1)", "~EqIncDOp", "~I(Ten1<=2)", "~I(Gorx == 7)"),
+  sapply(c("~I(HighEdHH==1)", "~EqIncDOp", "~I(Ten1<=2)", "~I(p396p * (p396p < 80))"),
          as.formula)
 
 H_full <-
@@ -516,11 +811,16 @@ H_cts <- H_cts %>% round(digits = 2)
 H_cts[, 1] <- H_cts[, 1] %>% round
 colnames(H_cts) <- c("Equivalised Income")
 
+H_age <- H_full[1, c(4)] %>% simplify2array %>% as.data.frame
+H_age <- H_age %>% round(digits = 1)
+colnames(H_age) <- c("Average Age (<80)")
+
+
 H_fct <-
-  (H_full[1, c(1, 3, 4)] %>% simplify2array %>% as.data.frame)[5:8, ]
+  (H_full[1, c(1, 3)] %>% simplify2array %>% as.data.frame)[5:8, ]
 H_fct <- (H_fct * 100)  %>% round(digits = 2)
 colnames(H_fct) <-
-  c("% academic degree", "% owning home", "% in London")
+  c("% academic degree", "% owning home")
 rownames(H_fct) <- rownames(H_cts)
 
 H_cts_SE <-
@@ -532,6 +832,15 @@ H_cts_SE[, 1] <- H_cts_SE[, 1] %>% round
 colnames(H_cts_SE) <- colnames(H_cts)
 H_cts_SE <-
   data.frame(apply(H_cts_SE, c(1, 2), function(x)
+    paste("±", x, sep = "")))
+
+H_age_SE <-
+  sapply(H_full[2, c(4)], function(x)
+    sqrt(diag(x))) %>% as.data.frame
+H_age_SE <- H_age_SE %>% round(digits = 1)
+colnames(H_age_SE) <- colnames(H_age)
+H_age_SE <-
+  data.frame(apply(H_age_SE, c(1, 2), function(x)
     paste("±", x, sep = "")))
 
 H_fct_SE <-
@@ -549,14 +858,14 @@ S_form <- altbind(
     H_fct %>% select(1),
     H_cts %>% select(1),
     H_fct %>% select(2),
-    H_fct %>% select(3),
+    H_age %>% select(1),
     check.names = FALSE
   ),
   data.frame(
     H_fct_SE %>% select(1),
     H_cts_SE %>% select(1),
     H_fct_SE %>% select(2),
-    H_fct_SE %>% select(3),
+    H_age_SE %>% select(1),
     check.names = FALSE
   )
 )
@@ -577,9 +886,7 @@ FT <- formattable(
       x / 100
     }),
     "SEM  " = smallfont,
-    "% in London" = my_color_bar("lightskyblue", 100, function(x) {
-      x / 100
-    }),
+    "Average Age (<80)" = my_color_bar("lightskyblue", 100, proportion),
     "SEM   " = smallfont
   )
 )
