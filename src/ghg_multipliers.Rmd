@@ -71,8 +71,12 @@ total_xp_coicop <- aggregate( . ~ COICOPCODE, total_xp_lcf, sum)
 
 coinew$total_xp <- total_xp_coicop$.[match(coinew$coinum, total_xp_coicop$COICOPCODE)]
 
-# convert values from tCO2 to kilogram
+# convert values from tCO2 to kilogram 
 coinew$ghg_factor <- 1000 * coinew$`2018` / coinew$total_xp
+# Note that actually both the left side and the right side should be multiplied by 1000
+# Left side: The date is given in ktCO2
+# Right side: The population estimate of the dataset is equal to 1000 * weighta * persons_per_household
+# These factors cancel out
 
 # Avoid NaN
 coinew$ghg_factor[coinew$total_xp == 0.] <- 0.
@@ -107,12 +111,11 @@ Consistency check: Aggregating weekly_ghg per household should be the same as mu
 ```{r}
 weekly_ghg_hh <- mapply(`*`,weekly_xp_hh,ghg_factor_lcf) %>% as.data.frame
 
-
-
-
 sum(weekly_ghg_hh * lcf$weighta * 52,na.rm=T) == sum(coinew$total_xp * coinew$ghg_factor, na.rm=T)
 
+```
 
+```{r}
 #Append "GHG" for later merging
 
 colnames(weekly_ghg_hh) <- paste("GHG", colnames(weekly_ghg_hh), sep="_")
