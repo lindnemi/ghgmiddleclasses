@@ -1,7 +1,7 @@
 ---
 title: "Data analysis of CO2 emissions and class structure"
 author: "Michael Lindner"
-date: "12/07/2024"
+date: "15/08/2024"
 output: html_document
 ---
 
@@ -157,8 +157,40 @@ of different subset can be combined. This should be used for all analysis.
 
 ```{r}
 svymi <- svydesign(ids = ~1,  weights = lcf$weighta, data = imputationList(mil[2:7]))
+# population weighted
+svymi_per_capita <- svydesign(ids = ~1,  weights = lcf$weighta * lcf$A049, data = imputationList(mil[2:7]))
 
 ```
+
+# Recalibrate weights for personal footprints
+
+```{r}
+lcf <- mil$`1`
+svy <- svydesign(ids = ~1,  weights = lcf$weighta, data = lcf)
+lcf$GHG <- lcf %>% select(starts_with("GHG")) %>% rowSums
+svy <- svydesign(ids = ~1,  weights = lcf$weighta, data = lcf)
+svy_per_capita <- svydesign(ids = ~1,  weights = lcf$weighta * lcf$A049, data = lcf)
+```
+
+
+```{r}
+ghg_per_person_direct = svytotal(~GHG, svy)[[1]] / svytotal(~A049, svy)[[1]]
+ghg_per_person_weighted = svymean(~I(GHG/A049), svy)[[1]]
+
+```
+
+
+```{r}
+svyby(~GHG, ~ReckwitzClass, svy, svytotal)$GHG * 52 / 1e3 / svyby(~A049, ~ReckwitzClass, svy, svytotal)$A049
+
+
+
+svyby(~I(GHG/A049), ~ReckwitzClass, svy, svymean)$GHG * 52 / 1e6
+
+
+```
+
+
 
 # Validation Statistics
 ```{r}
@@ -259,19 +291,19 @@ FT <- formattable(
     "% in London" = my_color_bar("violet", 100, function(x) {
       x / 100 * 2
     }),
-    "SEM" = smallfont,
+    "SE" = smallfont,
     "% no internet" = my_color_bar("tomato", 100, function(x) {
       x / 100 * 2
     }),
-    "SEM " = smallfont,
+    "SE " = smallfont,
     "% meat of total food" = my_color_bar("orange", 100, function(x) {
       x / 100 * 2
     }),
-    "SEM  " = smallfont,
+    "SE  " = smallfont,
     "% lifetime spent at address" = my_color_bar("lightskyblue", 100, function(x) {
       x / 100 * 2
     }),
-    "SEM   " = smallfont
+    "SE   " = smallfont
   )
 )
 
@@ -361,65 +393,6 @@ S_form
 ```
 #### Meat Share
 
-
-
-```{r}
-
-meat_codes <-
-  sapply(c("1.1.5", "1.1.6", "1.1.7", "1.1.8", "1.1.9", "1.1.10"),
-         coicop_to_lcf) %>% unlist %>% as.character
-
-food_codes <- coicop_to_lcf(1)
-
-consumption_codes <-
-  list(
-    meat_codes,
-    food_codes
-  )
-
-
-H_full <-
-  sapply(consumption_codes, function(x)
-    MIcombine(with(
-      svymi, svyby(coicop_to_ghg_formula(x), ~ ReckwitzClass, svymean)
-    )))
-
-
-H <- H_full[1, ] %>% simplify2array %>% as.data.frame
-H_SE <-
-  sapply(H_full[2, ], function(x)
-    sqrt(diag(x))) %>% as.data.frame
-
-
-S <- (H * 52 / 1000) %>% round(digits = 2)
-colnames(S) <-
-  c("Meat*",
-    "All Food*")
-
-
-S_SE <- (H_SE * 52 / 1000) %>% round(digits = 2)
-colnames(S_SE) <- colnames(S)
-S_SE <- apply(S_SE, c(1, 2), function(x)
-  paste("±", x, sep = ""))
-
-
-
-S_Form <- altbind(S, S_SE)
-
-
-FT <- formattable(
-  S_Form,
-  align = c("r", "l", "r", "l", "r", "l", "r", "l"),
-  list(
-    "Meat*" = my_color_bar("orange", 200),
-    "SEM" = smallfont,
-    "All Food*" = my_color_bar("lightskyblue", 200),
-    "SEM " = smallfont
-  )
-)
-
-FT
-```
 
 Meat / food 
 
@@ -587,7 +560,7 @@ Now lets compute total CO2 for all 12 COICOP categories
 CO2_full <-
   sapply(as.character(c(1:12)), function(x)
     MIcombine(with(
-      svymi, svyby(coicop_to_ghg_formula(x), ~ ReckwitzClass, svymean)
+      svymi_per_capita, svyby(coicop_to_ghg_formula(x), ~ ReckwitzClass, svymean)
     )))
 
 CO2 <- CO2_full[1, ] %>% simplify2array
@@ -613,7 +586,7 @@ png(
     "_",
     "upperclass",
     upper_threshold,
-    ".png",
+    "_per_capita.png",
     sep = ""
   )
 )
@@ -655,11 +628,11 @@ altbind <- function(df1, df2) {
   assertthat::assert_that(ncol(df1) == ncol(df2))
   assertthat::are_equal(rownames(df1), rownames(df2))
   df3 <- data.frame(df1[, 1], df2[, 1])
-  cns <- c(colnames(df1)[1], "SEM")
+  cns <- c(colnames(df1)[1], "SE")
   for (i in 2:ncol(df1)) {
     df3 <- data.frame(df3, df1[, i], df2[, i])
     cns <-
-      c(cns, colnames(df1)[i], paste("SEM", paste(rep(" ", i - 1), collapse = ""), sep =
+      c(cns, colnames(df1)[i], paste("SE", paste(rep(" ", i - 1), collapse = ""), sep =
                                        ""))
   }
   colnames(df3) <- cns
@@ -795,7 +768,7 @@ coicop_to_ttest_formula <- function(category) {
 
 ```{r}
 summary_forms <-
-  sapply(c("~I(HighEdHH==1)", "~EqIncDOp", "~I(Ten1<=2)", "~I(p396p * (p396p < 80))"),
+  sapply(c("~I(HighEdHH==1)", "~EqIncDOp", "~I(Ten1<=2)", "~A049"),
          as.formula)
 
 H_full <-
@@ -813,7 +786,7 @@ colnames(H_cts) <- c("Equivalised Income")
 
 H_age <- H_full[1, c(4)] %>% simplify2array %>% as.data.frame
 H_age <- H_age %>% round(digits = 1)
-colnames(H_age) <- c("Average Age (<80)")
+colnames(H_age) <- c("Average Household Size")
 
 
 H_fct <-
@@ -879,15 +852,15 @@ FT <- formattable(
     "% academic degree" = my_color_bar("violet", 100, function(x) {
       x / 100
     }),
-    "SEM" = smallfont,
+    "SE" = smallfont,
     "Equivalised Income" = my_color_bar("tomato", 100, proportion),
-    "SEM " = smallfont,
+    "SE " = smallfont,
     "% owning home" = my_color_bar("orange", 100, function(x) {
       x / 100
     }),
-    "SEM  " = smallfont,
-    "Average Age (<80)" = my_color_bar("lightskyblue", 100, proportion),
-    "SEM   " = smallfont
+    "SE  " = smallfont,
+    "Average Household Size" = my_color_bar("lightskyblue", 100, proportion),
+    "SE   " = smallfont
   )
 )
 
@@ -927,10 +900,11 @@ glm_formula <-
 
 lin <- with(svymi, svyglm(glm_formula))
 
+# unclear what weights should be applied here !!! ???
+
 # for (mod in lin) {show(summ(mod))}
 
 ```
-
 
 
 
@@ -1083,7 +1057,7 @@ highlevel_codes <- list(
 H_full <-
   sapply(highlevel_codes, function(x)
     MIcombine(with(
-      svymi, svyby(coicop_to_ghg_formula(x), ~ ReckwitzClass, svymean)
+      svymi_per_capita, svyby(coicop_to_ghg_formula(x), ~ ReckwitzClass, svymean)
     )))
 
 H <- H_full[1, ] %>% simplify2array %>% as.data.frame
@@ -1114,13 +1088,13 @@ FT <- formattable(
   align = c("r", "l", "r", "l", "r", "l"),
   list(
     "Housing" = my_color_bar("orange"),
-    "SEM" = smallfont,
+    "SE" = smallfont,
     "Mobility" = my_color_bar("lightskyblue"),
-    "SEM " = smallfont,
+    "SE " = smallfont,
     "Other" = my_color_bar("violet"),
-    "SEM  " = smallfont,
+    "SE  " = smallfont,
     "Total" = my_color_bar("tomato"),
-    "SEM   " = smallfont
+    "SE   " = smallfont
   )
 )
 FT
@@ -1137,7 +1111,7 @@ export_formattable(
     "_",
     "upperclass",
     upper_threshold,
-    ".png",
+    "_per_capita.png",
     sep = ""
   )
 )
@@ -1152,7 +1126,7 @@ T_full <-
     MIsvyttest(
       coicop_to_ttest_formula(x),
       subset(
-        svymi,
+        svymi_per_capita,
         ReckwitzClass == "new middle" | ReckwitzClass == "old middle"
       )
     ))
@@ -1180,7 +1154,7 @@ housing_codes <- list(
 H_full <-
   sapply(housing_codes, function(x)
     MIcombine(with(
-      svymi, svyby(coicop_to_ghg_formula(x), ~ ReckwitzClass, svymean)
+      svymi_per_capita, svyby(coicop_to_ghg_formula(x), ~ ReckwitzClass, svymean)
     )))
 ```
 
@@ -1211,13 +1185,13 @@ FT <- formattable(
   align = c("r", "l", "r", "l", "r", "l", "r", "l"),
   list(
     "Electricity" = my_color_bar("orange", 100),
-    "SEM" = smallfont,
+    "SE" = smallfont,
     "Gas" = my_color_bar("lightskyblue", 100),
-    "SEM " = smallfont,
+    "SE " = smallfont,
     "Other Housing" = my_color_bar("violet", 100),
-    "SEM  " = smallfont,
+    "SE  " = smallfont,
     "Total" = my_color_bar("tomato", 100),
-    "SEM   " = smallfont
+    "SE   " = smallfont
   )
 )
 
@@ -1234,7 +1208,7 @@ export_formattable(FT,
                      "_",
                      "upperclass",
                      upper_threshold,
-                     ".png",
+                     "_per_capita.png",
                      sep = ""
                    ))
 ```
@@ -1247,7 +1221,7 @@ T_full <-
     MIsvyttest(
       coicop_to_ttest_formula(x),
       subset(
-        svymi,
+        svymi_per_capita,
         ReckwitzClass == "new middle" | ReckwitzClass == "old middle"
       )
     ))
@@ -1281,7 +1255,7 @@ mobility_codes <-
 H_full <-
   sapply(mobility_codes, function(x)
     MIcombine(with(
-      svymi, svyby(coicop_to_ghg_formula(x), ~ ReckwitzClass, svymean)
+      svymi_per_capita, svyby(coicop_to_ghg_formula(x), ~ ReckwitzClass, svymean)
     )))
 
 
@@ -1303,7 +1277,7 @@ S_SE <- apply(S_SE, c(1, 2), function(x)
 
 
 internet_full <-
-  MIcombine(with(svymi, svyby(
+  MIcombine(with(svymi_per_capita, svyby(
     coicop_to_ghg_formula("8.4"), ~ ReckwitzClass, svymean
   )))
 Internet <-
@@ -1323,15 +1297,15 @@ FT <- formattable(
   align = c("r", "l", "r", "l", "r", "l", "r", "l"),
   list(
     "Cars" = my_color_bar("orange", 100),
-    "SEM" = smallfont,
+    "SE" = smallfont,
     "Public" = my_color_bar("lightskyblue", 100),
-    "SEM " = smallfont,
+    "SE " = smallfont,
     "Air" = my_color_bar("violet", 100),
-    "SEM  " = smallfont,
+    "SE  " = smallfont,
     "Total" = my_color_bar("tomato", 100),
-    "SEM   " = smallfont,
+    "SE   " = smallfont,
     "Internet" = my_color_bar("pink", 50, proportion),
-    "SEM    " = smallfont
+    "SE    " = smallfont
   )
 )
 
@@ -1348,7 +1322,7 @@ export_formattable(
     "_",
     "upperclass",
     upper_threshold,
-    ".png",
+    "_per_capita.png",
     sep = ""
   )
 )
@@ -1363,7 +1337,7 @@ T_full <-
     MIsvyttest(
       coicop_to_ttest_formula(x),
       subset(
-        svymi,
+        svymi_per_capita,
         ReckwitzClass == "new middle" | ReckwitzClass == "old middle"
       )
     ))
@@ -1404,7 +1378,7 @@ consumption_codes <-
 H_full <-
   sapply(consumption_codes, function(x)
     MIcombine(with(
-      svymi, svyby(coicop_to_ghg_formula(x), ~ ReckwitzClass, svymean)
+      svymi_per_capita, svyby(coicop_to_ghg_formula(x), ~ ReckwitzClass, svymean)
     )))
 
 
@@ -1438,15 +1412,15 @@ FT <- formattable(
   align = c("r", "l", "r", "l", "r", "l", "r", "l"),
   list(
     "Meat*" = my_color_bar("orange", 200),
-    "SEM" = smallfont,
+    "SE" = smallfont,
     "Other Food*" = my_color_bar("lightskyblue", 200),
-    "SEM " = smallfont,
+    "SE " = smallfont,
     "Restaurants, Holidays*" = my_color_bar("violet", 200),
-    "SEM  " = smallfont,
+    "SE  " = smallfont,
     "Miscellaneous" = my_color_bar("pink", 100),
-    "SEM   " = smallfont,
+    "SE   " = smallfont,
     "Total" = my_color_bar("tomato", 100),
-    "SEM    " = smallfont
+    "SE    " = smallfont
   )
 )
 
@@ -1462,7 +1436,7 @@ export_formattable(
     "_",
     "upperclass",
     upper_threshold,
-    ".png",
+    "_per_capita.png",
     sep = ""
   )
 )
@@ -1476,7 +1450,7 @@ T_full <-
     MIsvyttest(
       coicop_to_ttest_formula(x),
       subset(
-        svymi,
+        svymi_per_capita,
         ReckwitzClass == "new middle" | ReckwitzClass == "old middle"
       )
     ))
