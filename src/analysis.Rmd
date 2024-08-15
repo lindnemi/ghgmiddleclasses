@@ -1287,10 +1287,12 @@ internet_SE <- (internet_SE *  52 / 1000) %>% round(digits = 4)
 internet_SE <- sapply(internet_SE, function(x)
   paste("±", x, sep = ""))
 
+# S_Form <-
+#   altbind(data.frame(S, Internet, check.names = FALSE),
+#           data.frame(S_SE, internet_SE))
 S_Form <-
-  altbind(data.frame(S, Internet, check.names = FALSE),
-          data.frame(S_SE, internet_SE))
-
+  altbind(data.frame(S, check.names = FALSE),
+          data.frame(S_SE, check.names = FALSE))
 
 FT <- formattable(
   S_Form,
@@ -1303,9 +1305,9 @@ FT <- formattable(
     "Air" = my_color_bar("violet", 100),
     "SE  " = smallfont,
     "Total" = my_color_bar("tomato", 100),
-    "SE   " = smallfont,
-    "Internet" = my_color_bar("pink", 50, proportion),
-    "SE    " = smallfont
+    "SE   " = smallfont#,
+    # "Internet" = my_color_bar("pink", 50, proportion),
+    # "SE    " = smallfont
   )
 )
 
