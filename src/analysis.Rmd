@@ -785,7 +785,7 @@ H_cts[, 1] <- H_cts[, 1] %>% round
 colnames(H_cts) <- c("Equivalised Income")
 
 H_age <- H_full[1, c(4)] %>% simplify2array %>% as.data.frame
-H_age <- H_age %>% round(digits = 1)
+H_age <- H_age %>% round(digits = 2)
 colnames(H_age) <- c("Average Household Size")
 
 
@@ -810,7 +810,7 @@ H_cts_SE <-
 H_age_SE <-
   sapply(H_full[2, c(4)], function(x)
     sqrt(diag(x))) %>% as.data.frame
-H_age_SE <- H_age_SE %>% round(digits = 1)
+H_age_SE <- H_age_SE %>% round(digits = 2)
 colnames(H_age_SE) <- colnames(H_age)
 H_age_SE <-
   data.frame(apply(H_age_SE, c(1, 2), function(x)
