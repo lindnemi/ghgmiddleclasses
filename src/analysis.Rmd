@@ -127,6 +127,49 @@ mil <-
 
 ```
 
+The following code may be uncommented to obtain an analysis that consider lower class academic households separately
+```{r}
+# assign_reckwitz_class <- function(x, upper_threshold = 2.5) {
+#   # Since accessing columns by name in mutate is not so easy
+#   # Assuming x[1] is EqIncDOp and x[2] is HighEdHH
+#   if (x[1] <= 0.7 * median_income) {
+#     if (is.na(x[2])) {
+#       return(NA)
+#   }
+#     if (x[2] == 1) {
+#       return("academic lower")
+#   }
+#     if (x[2] == 10) {
+#       return("academic lower")
+#   } # student households
+#     return("lower")
+#   }
+#   if (x[1] >  upper_threshold * median_income) {
+#     return("upper")
+#   }
+#   if (is.na(x[2])) {
+#     return(NA)
+#   }
+#   if (x[2] == 1) {
+#     return("new middle")
+#   }
+#   if (x[2] == 10) {
+#     return("new middle")
+#   } # student households
+#   return("old middle")
+# }
+# 
+# #change this for sensitivity analysis
+# upper_threshold = 3
+# 
+# mil <-
+#   lapply(mil, function(x)
+#     x %>% rowwise %>% mutate(ReckwitzClass = factor(
+#       assign_reckwitz_class(c(EqIncDOp, HighEdHH), upper_threshold = upper_threshold),
+#       levels = c("lower", "academic lower", "old middle", "new middle", "upper")
+#     )))
+
+```
 
 How many Households are affected by the imputation
 
